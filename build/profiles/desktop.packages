@@ -1,0 +1,22 @@
+# BastionOS — Desktop profile EXTRAS (installed on top of minimal.packages).
+# GNOME on Wayland + Flatpak/bubblewrap sandboxing. Polished in Phase 7.
+
+# Display manager + GNOME (Wayland)
+gdm3
+gnome-core
+gnome-shell
+gnome-terminal
+nautilus
+
+# Audio / portals / sandboxing
+pipewire
+pipewire-pulse
+wireplumber
+xdg-desktop-portal
+xdg-desktop-portal-gnome
+flatpak
+bubblewrap
+
+# Fonts / browser
+fonts-dejavu
+firefox-esr

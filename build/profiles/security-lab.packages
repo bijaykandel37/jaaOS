@@ -1,0 +1,20 @@
+# BastionOS — Security Lab profile EXTRAS (installed on top of minimal + desktop).
+# The VAPT toolkit itself is CONTAINERIZED and scope-enforced in Phase 6 (bastion-scan),
+# NOT installed as host packages — that keeps tools fresh and off the host. Only a few
+# host-side helpers and the container runtime live here.
+
+# Container tooling for the VAPT images
+podman
+uidmap
+slirp4netns
+fuse-overlayfs
+buildah
+skopeo
+
+# A couple of host CLIs that are awkward to containerize
+nmap
+whois
+dnsutils
+
+# NOTE: nuclei/httpx/ffuf/sqlmap/zap/metasploit/trivy/etc. are delivered as pinned
+# container images via `bastion-scan` in Phase 6, with engagement-scope enforcement.

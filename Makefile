@@ -38,7 +38,7 @@ pam: ## Build the native C PAM module skeleton (needs libpam0g-dev)
 	$(MAKE) -C packages/bastion-env/pam_module
 
 lint: ## bash -n + shellcheck every shell script
-	@files=$$(grep -rlE '^#!/(usr/bin/env bash|bin/sh|bin/bash)' build packages tests 2>/dev/null); \
+	@files=$$(grep -rlE '^#!/(usr/bin/env bash|bin/sh|bin/bash)' build packages tests installer 2>/dev/null); \
 	for f in $$files; do bash -n "$$f" && echo "bash -n ok: $$f"; done; \
 	if command -v shellcheck >/dev/null; then shellcheck -S warning $$files || true; \
 	else echo "(shellcheck not installed; ran bash -n only)"; fi

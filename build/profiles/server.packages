@@ -1,0 +1,17 @@
+# BastionOS — Server profile EXTRAS (installed on top of minimal.packages).
+# Starter set; the hosting CLI (Phase 4) and monitoring stack (Phase 5) expand this.
+
+# Rootless containers (default runtime)
+podman
+uidmap
+slirp4netns
+catatonit
+fuse-overlayfs
+
+# Baseline monitoring exporter (full stack ships in Phase 5)
+prometheus-node-exporter
+
+# Handy on a server
+curl
+rsync
+ca-certificates

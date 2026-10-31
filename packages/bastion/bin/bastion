@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# `bastion` — top-level BastionOS CLI. Phase 3 implements `install`; `diff`/`apply` (the
+# declarative /etc/bastion/system.toml reconciler) are stubs for a later phase. Will be ported
+# to Rust (ADR 0002); the bash here is the behavioural spec.
+set -euo pipefail
+
+find_profiles_dir() {
+	local d
+	for d in /usr/share/bastionos "$(dirname "$(readlink -f "$0")")/../../.."; do
+		[ -d "$d/build/profiles" ] && { echo "$d/build/profiles"; return 0; }
+	done
+	return 1
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+install)
+	[ "$(id -u)" -eq 0 ] || { echo "run with sudo" >&2; exit 1; }
+	[ "$#" -ge 1 ] || { echo "usage: bastion install <profile|package...>" >&2; exit 2; }
+	comp="$1"
+	pd="$(find_profiles_dir || true)"
+	if [ -n "$pd" ] && [ -f "$pd/${comp}.packages" ]; then
+		mapfile -t pkgs < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$pd/${comp}.packages")
+		echo "Installing profile '$comp' (${#pkgs[@]} packages)"
+		apt-get update && apt-get install -y "${pkgs[@]}"
+	else
+		echo "Installing package(s): $*"
+		apt-get update && apt-get install -y "$@"
+	fi
+	;;
+diff|apply)
+	echo "'bastion $cmd' (declarative /etc/bastion/system.toml) is not implemented yet." >&2
+	exit 3
+	;;
+help|--help|-h)
+	cat <<'EOF'
+bastion — BastionOS system CLI
+  install <profile|pkg...>   install a profile's components, or packages, with one command
+  diff | apply               reconcile /etc/bastion/system.toml (planned; see brief)
+EOF
+	;;
+*)
+	echo "unknown command: $cmd (try 'bastion help')" >&2
+	exit 2
+	;;
+esac

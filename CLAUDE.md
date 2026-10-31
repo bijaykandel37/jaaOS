@@ -49,8 +49,8 @@ exactly where a C memory bug would be an auth bypass. Therefore:
 - `overlay-repo/`, `installer/`, `ci/` — scaffolded; later phases.
 
 ## Status / roadmap
-- ✅ **0** architecture · ✅ **1** minimal image · ✅ **2** dual-env — all three are **code + syntax-checked only**. Nothing has been built or booted yet (needs a Debian host + root VM).
-- ⬜ **3** installer (profiles + deniable-FDE partitioning + writes `/etc/bastion-env/config`) · **4** hosting CLI · **5** monitoring · **6** VAPT (containerized, scope-enforced) · **7** polish/CI/release.
+- ✅ **0** architecture · ✅ **1** minimal image · ✅ **2** dual-env · ✅ **3** installer (TUI+Calamares, real-disk FDE, profiles, dual-env wiring) — all **code + syntax-checked only**. Nothing has been built or booted yet (needs a Debian host + root VM). Installer is testable on a dev host via `tests/vm/install-test.sh` (loopback).
+- ⬜ **4** hosting CLI · **5** monitoring · **6** VAPT (containerized, scope-enforced) · **7** polish/CI/release.
 - Each phase's goals + acceptance criteria + known limitations live in its `docs/0N-*.md`.
 
 ## Build / test (Debian/Ubuntu host) — `make help` lists all targets

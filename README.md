@@ -22,7 +22,7 @@ fast orientation and the [`docs/`](docs/README.md) index for the design.
 | 0 | Architecture, threat model, repo layout | ✅ written |
 | 1 | Minimal image: hardened kernel, LUKS2 FDE, Secure Boot (UKI), Btrfs+snapper | ✅ code, not yet built |
 | 2 | Dual-password environments: design, prototype, leakage/forensic tests | ✅ code, not yet run |
-| 3 | Installer with profiles (+ deniable-FDE partitioning) | ⬜ pending |
+| 3 | Installer with profiles (TUI + Calamares), real-disk FDE, dual-env wiring | ✅ code, not yet run |
 | 4 | Hosting & load-balancing CLI | ⬜ pending |
 | 5 | Self-monitoring stack | ⬜ pending |
 | 6 | VAPT toolkit (containerized, scope-enforced) | ⬜ pending |
@@ -89,7 +89,7 @@ lives in the matching `docs/0N-*.md`.
 0. ✅ **Architecture** — base, diagram, threat model, layout, risks.
 1. ✅ **Minimal image** — hardened kernel config, FDE, Secure Boot (UKI), Btrfs snapshots.
 2. ✅ **Dual-password environments** — design, VM prototype, leakage and forensic tests.
-3. ⬜ **Installer** — graphical + TUI, profile selection.
+3. ✅ **Installer** — graphical + TUI, profile selection.
 4. ⬜ **Hosting / load balancing** — `bastion-host`.
 5. ⬜ **Monitoring** — local Prometheus/Loki/Grafana/Falco stack.
 6. ⬜ **VAPT toolkit** — containerized tools with scope enforcement.
