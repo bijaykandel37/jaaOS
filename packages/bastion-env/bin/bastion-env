@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# BastionOS dual-environment manager (user-facing CLI).
+#
+# `status` reveals NOTHING about non-active environments: no count, no list, and identical
+# output whether or not a hidden environment exists. There is deliberately no `list` verb.
+set -uo pipefail
+
+CONF=/etc/bastion-env/config
+PROVIDER_DIR=/usr/lib/bastion-env/providers
+STATE_DIR=/run/bastion-env
+ACTIVE="$STATE_DIR/active"
+
+need_root() { [ "$(id -u)" -eq 0 ] || { echo "run with sudo" >&2; exit 1; }; }
+# shellcheck disable=SC1090
+load() { [ -r "$CONF" ] && . "$CONF"; : "${PROVIDER:=luks2}"; : "${MANAGED_USER:=}"; }
+prov() { "$PROVIDER_DIR/$PROVIDER" "$@"; }
+
+read_pw_twice() {
+	local p1 p2
+	printf 'New environment password: ' >&2; read -rs p1; echo >&2
+	printf 'Confirm: ' >&2;                 read -rs p2; echo >&2
+	[ "$p1" = "$p2" ] || { echo "passwords did not match" >&2; return 1; }
+	printf '%s' "$p1"
+}
+
+load
+cmd="${1:-status}"; shift || true
+case "$cmd" in
+init)
+	need_root
+	[ -n "$MANAGED_USER" ] || { echo "set MANAGED_USER in $CONF first" >&2; exit 1; }
+	export BASTION_USER="$MANAGED_USER"
+	echo "Creating the primary environment for $MANAGED_USER."
+	pw="$(read_pw_twice)" || exit 1
+	printf '%s' "$pw" | prov init
+	echo "Primary environment created."
+	;;
+add)
+	need_root
+	[ -n "$MANAGED_USER" ] || { echo "set MANAGED_USER in $CONF first" >&2; exit 1; }
+	export BASTION_USER="$MANAGED_USER"
+	echo "Adding an environment. This reveals nothing about how many already exist."
+	pw="$(read_pw_twice)" || exit 1
+	printf '%s' "$pw" | prov add
+	echo "Done."
+	;;
+status)
+	if [ -s "$ACTIVE" ] && mountpoint -q "/home/${MANAGED_USER:-__none__}" 2>/dev/null; then
+		echo "environment: active"
+		avail="$(df -h --output=avail "/home/$MANAGED_USER" 2>/dev/null | tail -n1 | tr -d ' ')"
+		[ -n "$avail" ] && echo "free space : $avail"
+	else
+		echo "environment: none active"
+	fi
+	;;
+lock)
+	need_root
+	if [ -s "$ACTIVE" ]; then
+		read -r _e MAP _s _u < "$ACTIVE"
+		export BASTION_USER="$MANAGED_USER"
+		prov unmount "$MAP" || true
+		rm -f "$ACTIVE"
+		echo "locked."
+	else
+		echo "nothing active."
+	fi
+	;;
+backup)
+	need_root
+	[ -s "$ACTIVE" ] || { echo "no active environment to back up" >&2; exit 1; }
+	echo "Backs up the ACTIVE environment only, to that environment's own encrypted repo."
+	echo "Prototype stub — wire to borg/restic with a per-env passphrase (docs/03 §6)."
+	;;
+*)
+	echo "usage: bastion-env {init|add|status|lock|backup}" >&2
+	exit 2
+	;;
+esac

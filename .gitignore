@@ -3,6 +3,9 @@
 *.iso
 *.img
 *.qcow2
+# rust
+/target/
+**/target/
 # secrets / keys — never commit
 *.key
 *.pem

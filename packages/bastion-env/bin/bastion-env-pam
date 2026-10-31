@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# pam_exec helper for BastionOS dual-env. Invoked by pam_exec with PAM_TYPE in
+# {auth, open_session, close_session}, and PAM_USER / PAM_SERVICE in the environment.
+#
+# PROTOTYPE — syntax-checked, NOT security-audited. See docs/03-phase2-dual-env.md.
+#
+# CRITICAL CONTRACT with the PAM stack (see pam/bastion-env.pamd):
+#   The auth line is wired as [success=1 default=ignore]. Therefore:
+#     * exit 0  ONLY when we have AFFIRMATIVELY authenticated the managed user.
+#     * exit != 0 in every other case (not our user, wrong password, any error) so PAM
+#       IGNORES us and falls through to pam_unix (which fails on the locked account).
+#   Returning 0 for a non-managed user here would be an AUTH BYPASS. Hence `decline`.
+set -uo pipefail
+
+STATE_DIR=/run/bastion-env
+ACTIVE="$STATE_DIR/active"            # machine-wide: exactly one env active at a time
+LOCK="$STATE_DIR/lock"
+CONF=/etc/bastion-env/config          # MANAGED_USER=..., PROVIDER=luks2
+PROVIDER_DIR=/usr/lib/bastion-env/providers
+
+log() { logger -t bastion-env -p authpriv.info -- "$*" 2>/dev/null || true; }
+
+# "Not our business": for auth we must NOT grant success; for sessions, do nothing.
+decline() { [ "${PAM_TYPE:-}" = "auth" ] && exit 1 || exit 0; }
+
+[ -r "$CONF" ] || decline
+# shellcheck disable=SC1090
+. "$CONF"
+: "${PROVIDER:=luks2}"
+PAM_USER="${PAM_USER:-}"
+[ -n "${MANAGED_USER:-}" ] && [ "$PAM_USER" = "$MANAGED_USER" ] || decline
+
+export BASTION_USER="$PAM_USER"
+PROV="$PROVIDER_DIR/$PROVIDER"
+[ -x "$PROV" ] || { log "provider '$PROVIDER' missing"; decline; }
+
+mkdir -p "$STATE_DIR"; chmod 0700 "$STATE_DIR"
+exec 9>"$LOCK"; flock 9            # serialize every transition
+
+case "${PAM_TYPE:-}" in
+auth)
+	PW="$(cat)"                   # pam_exec expose_authtok feeds the password on stdin
+	if [ -s "$ACTIVE" ]; then
+		# Re-auth (sudo/su/polkit/screen-unlock): verify ONLY the active env. Presenting
+		# a different env's password fails like any wrong password, revealing nothing.
+		read -r _env _map SRC _usr < "$ACTIVE"
+		if printf '%s' "$PW" | "$PROV" verify-active "$SRC"; then exit 0; else exit 1; fi
+	else
+		# Fresh login (DM / TTY / SSH-keyboard): unlock exactly one env (constant time).
+		if OUT="$(printf '%s' "$PW" | "$PROV" try-unlock)"; then
+			printf '%s %s\n' "$OUT" "$PAM_USER" > "$ACTIVE"; chmod 0600 "$ACTIVE"
+			log "env unlocked for $PAM_USER via ${PAM_SERVICE:-?}"
+			exit 0
+		fi
+		exit 1
+	fi
+	;;
+open_session)
+	if [ -s "$ACTIVE" ]; then
+		read -r _env MAP _src _usr < "$ACTIVE"
+		mountpoint -q "/home/$PAM_USER" || "$PROV" mount "$MAP" || { log "mount failed"; exit 1; }
+	fi
+	# No active env (e.g. public-key SSH with nothing unlocked): proceed with no home.
+	exit 0
+	;;
+close_session)
+	# Unmount only when this is the last session for the user (best-effort; see Known
+	# limitations — a production build should use proper session refcounting).
+	if [ -s "$ACTIVE" ]; then
+		remaining="$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$PAM_USER" '$3==u' | wc -l)"
+		if [ "${remaining:-1}" -le 1 ]; then
+			read -r _env MAP _src _usr < "$ACTIVE"
+			"$PROV" unmount "$MAP" || true
+			shred -u "$ACTIVE" 2>/dev/null || rm -f "$ACTIVE"
+			keyctl clear @s 2>/dev/null || true
+			log "env locked for $PAM_USER"
+		fi
+	fi
+	exit 0
+	;;
+*)
+	exit 0
+	;;
+esac

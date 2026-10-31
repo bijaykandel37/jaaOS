@@ -1,0 +1,16 @@
+[package]
+name = "bastion-env"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Dual-password home environment manager"
+
+[[bin]]
+name = "bastion-env"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+bastion-core = { path = "../bastion-core" }

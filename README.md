@@ -13,9 +13,30 @@ This structure is a deliberate consequence of the project being maintained by **
 
 ## Status
 
-Phase 0 — architecture. Nothing here boots yet. This phase defines the base, the component
-layering, the threat model, the repo layout, and the top risks. Build artifacts arrive in
-Phase 1.
+Phases 0–2 are written as **code + docs, syntax-checked only** — nothing has been built or
+booted yet (that needs a Debian host and a root VM). New here? Read [`CLAUDE.md`](CLAUDE.md) for a
+fast orientation and the [`docs/`](docs/README.md) index for the design.
+
+| Phase | Scope | State |
+|------:|-------|-------|
+| 0 | Architecture, threat model, repo layout | ✅ written |
+| 1 | Minimal image: hardened kernel, LUKS2 FDE, Secure Boot (UKI), Btrfs+snapper | ✅ code, not yet built |
+| 2 | Dual-password environments: design, prototype, leakage/forensic tests | ✅ code, not yet run |
+| 3 | Installer with profiles (+ deniable-FDE partitioning) | ⬜ pending |
+| 4 | Hosting & load-balancing CLI | ⬜ pending |
+| 5 | Self-monitoring stack | ⬜ pending |
+| 6 | VAPT toolkit (containerized, scope-enforced) | ⬜ pending |
+| 7 | Desktop polish, docs, CI builds, release signing | ⬜ pending |
+
+## Quick start (Debian/Ubuntu host)
+
+```bash
+make deps      # install build/test dependencies
+make lint      # bash -n + shellcheck all scripts
+make image     # build out/bastionos-minimal.img (image step needs root)
+make vm        # boot it in QEMU (OVMF + swtpm)
+make help      # list every entry point
+```
 
 ## Honesty notice (read this before trusting the security model)
 
@@ -62,13 +83,20 @@ for audit. BastionOS is for testing systems you own or are explicitly contracted
 
 ## Build phases
 
-0. **Architecture** (this phase) — base, diagram, threat model, layout, risks.
-1. **Minimal ISO** — hardened kernel config, FDE, Secure Boot (UKI), Btrfs snapshots.
-2. **Dual-password environments** — design, VM prototype, leakage and forensic tests.
-3. **Installer** — graphical + TUI, profile selection.
-4. **Hosting / load balancing** — `bastion-host`.
-5. **Monitoring** — local Prometheus/Loki/Grafana/Falco stack.
-6. **VAPT toolkit** — containerized tools with scope enforcement.
-7. **Desktop polish, docs, CI builds, release signing, update/rollback pipeline.**
+Each phase stops for review; full detail (goals, files, build/test, acceptance, limitations)
+lives in the matching `docs/0N-*.md`.
 
-Each phase stops for review.
+0. ✅ **Architecture** — base, diagram, threat model, layout, risks.
+1. ✅ **Minimal image** — hardened kernel config, FDE, Secure Boot (UKI), Btrfs snapshots.
+2. ✅ **Dual-password environments** — design, VM prototype, leakage and forensic tests.
+3. ⬜ **Installer** — graphical + TUI, profile selection.
+4. ⬜ **Hosting / load balancing** — `bastion-host`.
+5. ⬜ **Monitoring** — local Prometheus/Loki/Grafana/Falco stack.
+6. ⬜ **VAPT toolkit** — containerized tools with scope enforcement.
+7. ⬜ **Desktop polish, docs, CI builds, release signing, update/rollback pipeline.**
+
+## License
+
+BastionOS is licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE).
+Bundled third-party components (the Debian base, and the VAPT tools in a later phase) keep their
+own licenses; the overlay repo records each component's license before redistribution.

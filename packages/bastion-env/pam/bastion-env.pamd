@@ -1,0 +1,27 @@
+# BastionOS dual-env PAM wiring (prototype).
+#
+# Add these to the services that should select/verify an environment: login, sshd,
+# gdm-password, sudo, su, su-l, polkit-1. (A production build ships this as a
+# /usr/share/pam-configs profile so `pam-auth-update` manages ordering.)
+#
+# ---- AUTH ----
+# pam_exec runs our helper and feeds the typed password on stdin (expose_authtok).
+# [success=1 default=ignore] makes us effectively "sufficient" ONLY on an affirmative
+# exit 0 from the helper: success jumps over pam_deny (authenticated); ANY other result
+# is ignored and control falls through to the normal stack (pam_unix), which fails on the
+# locked account. The helper is written to exit non-zero for non-managed users and wrong
+# passwords precisely so this cannot become an auth bypass. Order: place BEFORE pam_unix.
+#
+auth    [success=1 default=ignore]  pam_exec.so  expose_authtok quiet  /usr/lib/bastion-env/bin/bastion-env-pam
+auth    requisite                   pam_deny.so
+auth    required                    pam_permit.so
+# ...existing distro auth lines (pam_unix.so etc.) continue below unchanged...
+
+# ---- SESSION ----
+# Mount the unlocked env's home, then let pam_namespace give this session a fresh
+# per-session tmpfs /tmp and /var/tmp (destroyed at logout -> nothing survives an env
+# switch). [default=ignore] so a helper hiccup never blocks the session teardown.
+#
+session [default=ignore]  pam_exec.so  quiet  /usr/lib/bastion-env/bin/bastion-env-pam
+session required          pam_namespace.so
+# ...existing distro session lines (pam_systemd.so etc.) continue below...

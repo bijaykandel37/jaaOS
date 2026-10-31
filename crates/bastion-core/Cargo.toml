@@ -1,0 +1,10 @@
+[package]
+name = "bastion-core"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared helpers for the bastion-* tools"
+
+[dependencies]
+anyhow.workspace = true

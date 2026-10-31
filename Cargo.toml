@@ -1,0 +1,23 @@
+# BastionOS Rust workspace. Runtime tools live here (see docs/decisions/0002).
+# Build:  cargo build --release   (or `make rust`)
+[workspace]
+resolver = "2"
+members = [
+    "crates/bastion-core",
+    "crates/bastion-env",
+    "crates/pam-bastion-env",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.75"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/"   # set to the GitHub URL on first push
+
+[workspace.dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+
+[profile.release]
+strip = true
+lto = "thin"

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# BastionOS dual-env STORAGE PROVIDER: shufflecake  (DENIABLE, BETA)
+#
+# Drives the upstream `shufflecake` tool (https://shufflecake.net), which fills a whole
+# device with randomness and reveals nested volumes password-by-password WITHOUT revealing
+# how many exist. This is the provider to use when deniability of existence is required.
+#
+# This is an INTEGRATION SKETCH against the upstream CLI (whose exact verbs/output may
+# differ by version) and is NOT audited. If shufflecake is absent, every verb explains how
+# to get it rather than faking success. Same contract as the luks2 provider.
+set -uo pipefail
+
+: "${BASTION_USER:?BASTION_USER not set}"
+HOME_DIR="${BASTION_HOME:-/home/$BASTION_USER}"
+: "${BASTION_SC_DEVICE:?set BASTION_SC_DEVICE to the whole-disk backing device/file}"
+BACKING="$BASTION_SC_DEVICE"
+
+have() { command -v shufflecake >/dev/null 2>&1; }
+guard() { have || { echo "shufflecake not installed (beta). See https://shufflecake.net — the deniable provider requires it." >&2; exit 3; }; }
+
+cmd="${1:-}"; shift || true
+guard
+case "$cmd" in
+init)       shufflecake init "$BACKING" ;;            # random-fill device + first (decoy) volume
+add)        shufflecake add  "$BACKING" ;;            # add a hidden volume; count stays hidden
+try-unlock) # password on stdin -> "sc MAPPER BACKING"
+	pw="$(cat)"
+	if out="$(printf '%s' "$pw" | shufflecake open "$BACKING" 2>/dev/null)"; then
+		map="$(printf '%s\n' "$out" | awk '/mapper/{print $NF}' | sed 's#/dev/mapper/##' | tail -n1)"
+		[ -n "$map" ] || exit 1
+		printf 'sc %s %s\n' "$map" "$BACKING"
+	else
+		exit 1
+	fi
+	;;
+verify-active)
+	# KNOWN GAP: shufflecake has no pure "test this password" that opens nothing, so
+	# re-auth (sudo/screen-unlock) under shufflecake needs a different mechanism than
+	# luks2's --test-passphrase. Documented limitation; do not pretend it works.
+	echo "verify-active is not supported on the shufflecake prototype path" >&2
+	exit 3
+	;;
+mount)   m="$1"; mount -o noatime,nosuid,nodev "/dev/mapper/$m" "$HOME_DIR"
+	chown "$(id -u "$BASTION_USER")":"$(id -g "$BASTION_USER")" "$HOME_DIR" ;;
+unmount) m="$1"; { mountpoint -q "$HOME_DIR" && umount "$HOME_DIR"; } || true
+	shufflecake close "$BACKING" 2>/dev/null || true ;;
+*)
+	echo "usage: $0 {init|add|try-unlock|verify-active <src>|mount <mapper>|unmount <mapper>}" >&2
+	exit 2
+	;;
+esac
