@@ -8,8 +8,24 @@ slirp4netns
 catatonit
 fuse-overlayfs
 
-# Baseline monitoring exporter (full stack ships in Phase 5)
+# --- Monitoring (Phase 5) ---
+# From Debian main (inherits Debian security maintenance — CLAUDE.md policy):
 prometheus-node-exporter
+prometheus
+prometheus-alertmanager
+auditd
+aide
+aide-common
+#
+# "full" mode adds Grafana + Loki + Alloy + Falco. These are NOT in Debian main; they come from
+# the vendors' own signed APT repos, added via the BastionOS overlay (see
+# docs/06-phase5-monitoring.md §Install). Listed here as a reminder, commented so this profile
+# stays installable from Debian alone:
+#   grafana            # grafana.com apt repo
+#   loki               # grafana.com apt repo
+#   alloy              # grafana.com apt repo (replaces promtail)
+#   falco              # falcosecurity apt repo; MUST use the modern_ebpf driver on our
+#                      # Secure Boot + lockdown + module.sig_enforce kernel (no out-of-tree kmod)
 
 # Handy on a server
 curl

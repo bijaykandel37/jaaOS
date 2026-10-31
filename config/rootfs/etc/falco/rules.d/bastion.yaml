@@ -1,0 +1,49 @@
+### BastionOS — custom Falco rules (Phase 5).
+# A small, high-signal set layered on top of Falco's packaged default rules. Keep it lean:
+# noisy rules train operators to ignore Falco. Tune `bastion_known_*` lists per host.
+#
+# DENIABILITY: no rule here references the dual-env feature, home layout, or environment count.
+# Falco watches syscalls on the ACTIVE system only and has no notion of a second environment.
+
+- list: bastion_known_shell_parents
+  items: [systemd, sshd, login, bash, sh, sudo, su, cron, tmux, screen]
+
+- list: bastion_sensitive_files
+  items: [/etc/shadow, /etc/gshadow, /etc/sudoers, /etc/ssh/sshd_config]
+
+# A shell spawned by a long-running network service is a classic post-exploitation signal.
+- macro: spawned_by_service
+  condition: >
+    proc.pname in (nginx, caddy, haproxy, traefik, node, php-fpm, podman, conmon)
+
+- rule: Shell spawned by network service
+  desc: A web/LB service process spawned an interactive shell — possible RCE.
+  condition: >
+    spawned_process and shell_procs and spawned_by_service
+  output: >
+    Shell spawned by a network service (user=%user.name shell=%proc.name
+    parent=%proc.pname cmdline=%proc.cmdline container=%container.id)
+  priority: WARNING
+  tags: [process, mitre_execution]
+
+- rule: Read sensitive credential file
+  desc: A process outside the expected set read a sensitive credential file.
+  condition: >
+    open_read and fd.name in (bastion_sensitive_files)
+    and not proc.name in (sshd, sudo, su, login, systemd, auditd, aide, passwd, sshd-session)
+  output: >
+    Sensitive file read (user=%user.name file=%fd.name proc=%proc.name
+    cmdline=%proc.cmdline)
+  priority: WARNING
+  tags: [filesystem, mitre_credential_access]
+
+- rule: Outbound connection from shell
+  desc: An interactive shell opened an outbound network connection — possible reverse shell.
+  condition: >
+    outbound and shell_procs
+    and not fd.sip in (127.0.0.1)
+  output: >
+    Outbound connection from shell (user=%user.name proc=%proc.name
+    dest=%fd.sip:%fd.sport cmdline=%proc.cmdline)
+  priority: NOTICE
+  tags: [network, mitre_exfiltration]

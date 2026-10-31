@@ -1,0 +1,64 @@
+### BastionOS — Prometheus scrape configuration (Phase 5).
+#
+# Design notes:
+#  - LOCAL-ONLY. Every target is 127.0.0.1; nothing here listens on a public address and the
+#    firewall (Phase 1 nftables) does not open 9090/9093/9100/3000/3100. Reach dashboards over
+#    an SSH tunnel, not the network.
+#  - DENIABILITY: this file has no concept of "environments". There is no scrape job, label, or
+#    target that reveals the dual-env feature or whether a second home exists. The only dynamic
+#    targets come from file_sd below, which lists the host services the operator created with
+#    `bastion-host` (system state, already shared — see docs/06-phase5-monitoring.md §Deniability).
+#  - Upstream components, lightly configured (CLAUDE.md policy). We ship config, not a fork.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    host: bastion
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["127.0.0.1:9093"]
+      # Alertmanager is part of the "full" mode only. In "lite" mode it is not running;
+      # Prometheus still evaluates rules and exposes them on /alerts and its own API, which is
+      # what `bastion-health alerts` reads, so alerting degrades gracefully without it.
+
+scrape_configs:
+  # Prometheus itself.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+
+  # Host metrics (CPU, memory, disk, load, systemd units, and the textfile collector that
+  # carries BastionOS security metrics — see bastion-security-metrics).
+  - job_name: node
+    static_configs:
+      - targets: ["127.0.0.1:9100"]
+
+  # Alertmanager (present in full mode; the scrape just fails cheaply in lite mode).
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["127.0.0.1:9093"]
+
+  # Services created by `bastion-host` (Phase 4). Each `site`/`lb`/`ha` command drops a
+  # file_sd JSON here; Prometheus picks it up with no reload. The per-target
+  # __metrics_path__ label (set by bastion-host) overrides the scrape path.
+  - job_name: bastion-host
+    file_sd_configs:
+      - files:
+          - /etc/bastion/monitoring/targets.d/*.json
+        refresh_interval: 30s
+
+  # Grafana and Loki self-metrics (full mode). Harmless no-ops when not installed.
+  - job_name: grafana
+    static_configs:
+      - targets: ["127.0.0.1:3000"]
+    metrics_path: /metrics
+  - job_name: loki
+    static_configs:
+      - targets: ["127.0.0.1:3100"]
+    metrics_path: /metrics

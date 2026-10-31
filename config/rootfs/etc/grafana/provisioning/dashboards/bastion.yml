@@ -1,0 +1,17 @@
+### BastionOS — Grafana dashboard provider (Phase 5, "full" mode).
+# Loads the JSON dashboards shipped under /etc/grafana/dashboards. Editable in the UI, but the
+# files on disk are the source of truth (changes are overwritten on restart unless you disable
+# this provider).
+apiVersion: 1
+
+providers:
+  - name: bastionos
+    orgId: 1
+    folder: BastionOS
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

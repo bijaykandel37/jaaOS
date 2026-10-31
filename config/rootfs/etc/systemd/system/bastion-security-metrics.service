@@ -1,0 +1,18 @@
+[Unit]
+Description=BastionOS security posture metrics (node_exporter textfile collector)
+Documentation=file:///usr/share/doc/bastionos/06-phase5-monitoring.md
+# Best-effort collector; do not fail the boot if a probe is missing.
+
+[Service]
+Type=oneshot
+# Installed by the bastion-health package; until then, from the repo:
+#   sudo install -m0755 packages/bastion-health/bin/bastion-security-metrics /usr/local/sbin/
+ExecStart=/usr/local/sbin/bastion-security-metrics
+Nice=10
+IOSchedulingClass=idle
+# Hardening: this only reads status and writes one file under the textfile dir.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/prometheus/node-exporter
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes

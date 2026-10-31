@@ -1,0 +1,50 @@
+### BastionOS — Loki single-binary configuration (Phase 5, "full" mode only).
+# Local log store for a single host. Filesystem storage (no object store, no cluster), bound to
+# localhost, short retention. This is a self-monitoring aid, not a long-term SIEM.
+auth_enabled: false
+
+server:
+  http_listen_address: 127.0.0.1
+  http_listen_port: 3100
+  grpc_listen_address: 127.0.0.1
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /var/lib/loki
+  storage:
+    filesystem:
+      chunks_directory: /var/lib/loki/chunks
+      rules_directory: /var/lib/loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 168h          # 7 days; see note in docs on what this does NOT buy you
+  ingestion_rate_mb: 4
+  ingestion_burst_size_mb: 8
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+compactor:
+  working_directory: /var/lib/loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+# NOTE: Loki data lives in /var/lib/loki, a SHARED system directory. It is NOT part of either
+# encrypted home and gives NO deniability — it persists across environment switches. The auth
+# path is dropped upstream in Alloy so env-identifying lines never land here, but anyone with
+# root or a forensic image can read whatever logs the active system produced. This matches the
+# threat model: system dirs are shared. Do not treat Loki as private to an environment.

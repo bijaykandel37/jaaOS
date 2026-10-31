@@ -230,11 +230,13 @@ How the architecture already forecloses leaks (Phase 1 + this phase), and the ho
 | kernel keyring | Scrubbed | session keyring revoked at logout; volume key in kernel only while mapped | Root while active can extract. Documented. |
 | filesystem timestamps | Shared | container/free-space mtime changes when B is used | **Deniability leak**: a forensic image can see "free space" was written recently. Hard to fully mask. Medium–high for deniability. |
 | disk-usage via monitoring | Shared | node_exporter filesystem collector | **Leak**: raw-device used-bytes includes B even when unmounted. Mitigation: collector scoped to mounted FS only + decoy sized plausibly. Residual: a careful observer can still compare. Medium. |
+| **monitoring TSDB / logs** (R-MON) | Shared | Prometheus `/var/lib/prometheus`, Loki `/var/lib/loki`, Grafana state | **Activity-timing leak**: metrics/logs collected while B is active persist in shared `/var/lib` and are readable in A or from a forensic image. Mitigations (Phase 5): the stack has **no env concept** (no env metric/label/dashboard/`bastion-health` view), Alloy **drops the dual-env auth path** so it never lands in Loki, and `lite` mode keeps retention short. Residual: timing history still persists; no deniability. Covered by "system dirs are shared / no forensic defence." Medium. |
 | thumbnail / recently-used caches | Isolated | `~/.cache`, `~/.local/share` inside home | Low. |
 
 The clear residuals — user journal, NetworkManager, cron, filesystem timestamps, monitoring
-used-bytes — are called out rather than hidden. Three (journal, coredump, /tmp) are closed by
-the config drop-ins this phase ships; the rest are documented limitations.
+used-bytes and the monitoring TSDB/logs (R-MON) — are called out rather than hidden. Three
+(journal, coredump, /tmp) are closed by the config drop-ins this phase ships; the rest are
+documented limitations. R-MON is addressed in `docs/06-phase5-monitoring.md §Deniability`.
 
 ---
 

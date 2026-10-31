@@ -1,0 +1,59 @@
+// BastionOS — Grafana Alloy log pipeline (Phase 5, "full" mode only).
+// Reads the systemd journal and ships to the local Loki. Alloy replaces the deprecated
+// Promtail. Validate on a real host with:  alloy validate /etc/alloy/config.alloy
+//
+// DENIABILITY GUARD (non-negotiable — see docs/06-phase5-monitoring.md §Deniability):
+//   The auth path (bastion-env, bastion-env-pam, the PAM helper) must never put
+//   environment-identifying text into a queryable, persisted log store. Phase 2 already makes
+//   those tools log nothing that identifies an environment; this pipeline is defence in depth:
+//   it DROPS their journal entries outright before anything reaches Loki, and it never creates
+//   a per-environment label. Do not "fix" this by keeping those logs — that would reintroduce a
+//   leak that opportunistic inspection of Loki could catch.
+
+livedebugging {
+  enabled = false
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://127.0.0.1:3100/loki/api/v1/push"
+  }
+}
+
+// Stage 1: map a few journal fields to labels. Keep the label set small and generic.
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+  rule {
+    source_labels = ["__journal__hostname"]
+    target_label  = "host"
+  }
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+
+  // Drop the dual-env auth path entirely. These identifiers must not persist in Loki.
+  rule {
+    source_labels = ["__journal__syslog_identifier"]
+    regex         = "bastion-env|bastion-env-pam|pam_bastion_env"
+    action        = "drop"
+  }
+  // Belt and braces: also drop by unit name, in case they run as a service.
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "bastion-env.*"
+    action        = "drop"
+  }
+}
+
+loki.source.journal "read" {
+  forward_to    = [loki.write.local.receiver]
+  relabel_rules = loki.relabel.journal.rules
+  labels        = { job = "systemd-journal" }
+  max_age       = "12h"
+}

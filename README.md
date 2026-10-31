@@ -24,7 +24,7 @@ fast orientation and the [`docs/`](docs/README.md) index for the design.
 | 2 | Dual-password environments: design, prototype, leakage/forensic tests | ✅ code, not yet run |
 | 3 | Installer with profiles (TUI + Calamares), real-disk FDE, dual-env wiring | ✅ code, not yet run |
 | 4 | Hosting & load-balancing CLI (`bastion-host`) | ✅ code + tests pass |
-| 5 | Self-monitoring stack | ⬜ pending |
+| 5 | Self-monitoring stack (Prometheus/Loki/Grafana/Falco + `bastion-health`) | ✅ code + tests pass |
 | 6 | VAPT toolkit (containerized, scope-enforced) | ⬜ pending |
 | 7 | Desktop polish, docs, CI builds, release signing | ⬜ pending |
 
@@ -91,7 +91,7 @@ lives in the matching `docs/0N-*.md`.
 2. ✅ **Dual-password environments** — design, VM prototype, leakage and forensic tests.
 3. ✅ **Installer** — graphical + TUI, profile selection.
 4. ✅ **Hosting / load balancing** — `bastion-host`.
-5. ⬜ **Monitoring** — local Prometheus/Loki/Grafana/Falco stack.
+5. ✅ **Monitoring** — local Prometheus/Loki/Grafana/Falco stack + `bastion-health`.
 6. ⬜ **VAPT toolkit** — containerized tools with scope enforcement.
 7. ⬜ **Desktop polish, docs, CI builds, release signing, update/rollback pipeline.**
 

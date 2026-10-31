@@ -40,17 +40,17 @@ exactly where a C memory bug would be an auth bypass. Therefore:
 
 ## Repo map
 - `docs/` — `00` architecture, `01` threat model, `02` phase-1 image, `03` phase-2 dual-env, `decisions/` ADRs. **Read before changing design; update when you change behaviour.**
-- `crates/` — Rust workspace: `bastion-core` (shared), `bastion-env` + `bastion-host` (CLIs, port in progress), `pam-bastion-env` (cdylib scaffold). The real product tooling lands here. Bash specs live in `packages/*/bin/`.
+- `crates/` — Rust workspace: `bastion-core` (shared), `bastion-env` + `bastion-host` + `bastion-health` (CLIs, port in progress), `pam-bastion-env` (cdylib scaffold). The real product tooling lands here. Bash specs live in `packages/*/bin/`.
 - `build/` — `build.sh` (orchestrator) → `secureboot.sh` (SB keys) + `mkrootfs.sh` (reproducible Debian rootfs) + `mkimage.sh` (LUKS2+Btrfs+signed-UKI image). `profiles/*.packages`, `hooks/`.
 - `kernel/` — `cmdline` (baked into the UKI; VM-safe), `cmdline.hardened` (opt-in aggressive; can brick boot — never bake by default).
-- `config/rootfs/` — the `/etc`+`/usr` tree synced into the image (sysctl, nftables, sshd, zram, apparmor, `bastion-env/`, …).
+- `config/rootfs/` — the `/etc`+`/usr` tree synced into the image (sysctl, nftables, sshd, zram, apparmor, `bastion-env/`, and the Phase-5 monitoring configs: `prometheus/`, `alertmanager/`, `alloy/`, `loki/`, `grafana/`, `falco/`, `bastion/monitoring/`).
 - `packages/bastion-env/` — dual-env: `providers/{luks2,shufflecake}`, `bin/{bastion-env,bastion-env-pam}`, `pam/bastion-env.pamd`, `pam_module/` (native C **skeleton, unaudited**).
 - `tests/vm/` — `run-qemu.sh`, `checks.sh` (phase-1 acceptance), `dual-env-test.sh` (phase-2). `tests/forensic/` — deniability characterization.
 - `overlay-repo/`, `installer/`, `ci/` — scaffolded; later phases.
 
 ## Status / roadmap
-- ✅ **0** architecture · ✅ **1** minimal image · ✅ **2** dual-env · ✅ **3** installer (TUI+Calamares, real-disk FDE, profiles, dual-env wiring) · ✅ **4** hosting CLI (`bastion-host`). Phases 1–3 are code + syntax-checked (not yet built/booted); Phase 4's `tests/vm/hosting-test.sh` **passes (real run, sandboxed, no root)**. Installer is testable on a dev host via `tests/vm/install-test.sh` (loopback).
-- ⬜ **5** monitoring · **6** VAPT (containerized, scope-enforced) · **7** polish/CI/release.
+- ✅ **0** architecture · ✅ **1** minimal image · ✅ **2** dual-env · ✅ **3** installer (TUI+Calamares, real-disk FDE, profiles, dual-env wiring) · ✅ **4** hosting CLI (`bastion-host`) · ✅ **5** monitoring (Prometheus/Alertmanager/Loki/Alloy/Grafana/Falco configs + `bastion-health` + `bastion-security-metrics`). Phases 1–3 are code + syntax-checked (not yet built/booted); Phase 4's `tests/vm/hosting-test.sh` and Phase 5's `tests/vm/monitoring-test.sh` **pass (real runs, sandboxed, no root)**. Installer is testable on a dev host via `tests/vm/install-test.sh` (loopback).
+- ⬜ **6** VAPT (containerized, scope-enforced) · **7** polish/CI/release.
 - Each phase's goals + acceptance criteria + known limitations live in its `docs/0N-*.md`.
 
 ## Build / test (Debian/Ubuntu host) — `make help` lists all targets
@@ -72,3 +72,5 @@ exactly where a C memory bug would be an auth bypass. Therefore:
 - Don't disable user namespaces in sysctl — rootless Podman needs them.
 - Don't make the dual-env PAM helper `exit 0` for non-managed users — `pam_exec` maps exit 0 to auth success (that would be a bypass). See the `decline()` logic in `bastion-env-pam`.
 - Don't add a `bastion-env list`/count command — it would break deniability (`status` must reveal nothing about other environments).
+- Don't add any env-aware metric, label, dashboard, or a `bastion-health environments`/`list` command — same deniability rule as `bastion-env status`. Keep the Alloy drop of the `bastion-env*` auth-path journal identifiers (defence in depth so a stray log line never persists in Loki). See `docs/06-phase5-monitoring.md §Deniability`.
+- Don't switch Falco to the `kmod`/legacy-`ebpf` driver — the signed, lockdown + `module.sig_enforce` kernel refuses the out-of-tree module. Use `modern_ebpf` only.
