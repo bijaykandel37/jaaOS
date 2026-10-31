@@ -1,0 +1,12 @@
+#!/bin/sh
+# Pre-apt snapshot. Silent no-op unless snapper's "root" config exists, so the
+# image builds and early boots before snapper is configured don't fail apt.
+set -eu
+
+command -v snapper >/dev/null 2>&1 || exit 0
+snapper -c root list >/dev/null 2>&1 || exit 0
+
+DESC="apt $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+snapper -c root create --type single --cleanup-algorithm number \
+	--description "$DESC" --userdata "source=apt" >/dev/null 2>&1 || true
+exit 0

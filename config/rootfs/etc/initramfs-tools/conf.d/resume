@@ -1,0 +1,3 @@
+# No hibernation on BastionOS: decrypted memory must never be written to disk.
+# This keeps the initramfs from probing for / resuming off a swap device.
+RESUME=none

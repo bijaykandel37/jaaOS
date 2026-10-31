@@ -1,0 +1,61 @@
+# BastionOS — Minimal profile package set (Debian 13 "trixie", amd64)
+# Consumed by build/mkrootfs.sh. One package per line; # starts a comment.
+# Package names target trixie; if apt reports one missing, it is a one-line fix here.
+
+# --- kernel & firmware ---
+linux-image-amd64
+amd64-microcode
+intel-microcode
+
+# --- init / core system ---
+systemd
+systemd-sysv
+systemd-boot
+systemd-ukify
+systemd-resolved
+systemd-timesyncd
+systemd-zram-generator
+udev
+dbus
+polkitd
+
+# --- filesystem / crypto / boot ---
+btrfs-progs
+cryptsetup
+cryptsetup-initramfs
+tpm2-tools
+efibootmgr
+sbsigntool
+dosfstools
+initramfs-tools
+
+# --- snapshots ---
+snapper
+
+# --- networking ---
+iproute2
+iputils-ping
+nftables
+openssh-server
+ca-certificates
+
+# --- MAC / audit / hardening ---
+apparmor
+apparmor-profiles
+apparmor-utils
+auditd
+
+# --- base userland ---
+sudo
+bash-completion
+less
+vim-tiny
+nano
+curl
+wget
+htop
+pciutils
+usbutils
+locales
+console-setup
+keyboard-configuration

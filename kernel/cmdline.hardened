@@ -1,0 +1,11 @@
+# BastionOS — high-assurance WORKSTATION kernel command line (opt-in variant).
+#
+# WARNING: These flags can prevent boot on some hardware/VMs and are baked into an
+# immutable signed UKI. TEST on the exact target before shipping an image with this
+# cmdline. `nosmt` disables hyperthreading (large throughput loss) — do NOT use it on
+# servers. `iommu=force`/`efi=disable_early_pci_dma` need working IOMMU; they can panic
+# a VM without a virtual IOMMU.
+#
+# To use: point build/mkimage.sh at this file (CMDLINE=kernel/cmdline.hardened).
+# Keep as ONE physical line when used; the comment lines above are stripped by mkimage.
+ro quiet loglevel=3 console=tty1 console=ttyS0,115200 root=/dev/mapper/bastion_root lsm=landlock,lockdown,yama,apparmor,bpf lockdown=confidentiality module.sig_enforce=1 init_on_alloc=1 init_on_free=1 slab_nomerge page_alloc.shuffle=1 randomize_kstack_offset=1 pti=on vsyscall=none debugfs=off mitigations=auto,nosmt intel_iommu=on amd_iommu=on iommu=force efi=disable_early_pci_dma
