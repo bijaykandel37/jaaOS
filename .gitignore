@@ -1,0 +1,13 @@
+# build outputs
+/out/
+*.iso
+*.img
+*.qcow2
+# secrets / keys — never commit
+*.key
+*.pem
+secureboot/keys/
+overlay-repo/keys/
+# editor / os
+.DS_Store
+*.swp
