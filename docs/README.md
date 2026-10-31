@@ -11,8 +11,9 @@ Read in order; each phase doc ends with acceptance criteria and known limitation
 | [04-phase3-installer.md](04-phase3-installer.md) | Installer (TUI + Calamares): real-disk FDE, profile selection, dual-env wiring, declarable-env-only install. |
 | [05-phase4-hosting.md](05-phase4-hosting.md) | Hosting & load-balancing CLI (`bastion-host`): nginx/Caddy sites, HAProxy/Traefik LBs, keepalived HA, firewall + monitoring integration. |
 | [06-phase5-monitoring.md](06-phase5-monitoring.md) | Self-monitoring stack: Prometheus/Alertmanager/Loki/Alloy/Grafana/Falco + `bastion-health`, lite/full modes, the monitoring deniability rules (R-MON). |
+| [07-phase6-vapt.md](07-phase6-vapt.md) | VAPT toolkit `bastion-scan`: engagement files, the scope gate, containerized assessment profiles, audit — authorized-testing-only. |
 | [decisions/](decisions/) | ADRs: [0001 base distribution](decisions/0001-base-distribution.md), [0002 implementation language](decisions/0002-implementation-language.md). |
 
 For a quick orientation and the project conventions, see [`../CLAUDE.md`](../CLAUDE.md).
-Roadmap: phases 0–5 are written (code; phases 4–5 also have sandboxed tests that pass, nothing
-built/booted yet); phases 6–7 are pending.
+Roadmap: phases 0–6 are written (code; phases 4–6 also have sandboxed tests that pass, nothing
+built/booted yet); phase 7 is pending.

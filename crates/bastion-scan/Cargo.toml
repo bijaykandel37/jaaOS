@@ -1,0 +1,16 @@
+[package]
+name = "bastion-scan"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Authorized-testing-only VAPT orchestrator (scope-enforced, audited)"
+
+[[bin]]
+name = "bastion-scan"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+bastion-core = { path = "../bastion-core" }

@@ -20,7 +20,9 @@ any doc, code comment, or user-facing string, keep this framing:
   BastionOS; does **not** survive root-level malware (system dirs are shared); is **no** defense
   against legal compulsion.
 Source of truth: `docs/01-threat-model.md`, `docs/03-phase2-dual-env.md` §2 and §9.
-Likewise: the VAPT toolkit (later phase) is authorized-testing-only, scope-enforced.
+Likewise: the VAPT toolkit (`bastion-scan`, Phase 6) is authorized-testing-only, scope-enforced,
+audited, and assessment-only — it ships **no** exploits/DoS/evasion/mass-targeting, and refuses
+to run without an engagement file declaring `AUTHORIZATION_REF` + scope. Keep that framing.
 
 ## Implementation language (ADR: `docs/decisions/0002`)
 Runtime tools are **Rust**; build glue stays **shell**. Why: C and Rust are the same speed tier,
@@ -40,7 +42,7 @@ exactly where a C memory bug would be an auth bypass. Therefore:
 
 ## Repo map
 - `docs/` — `00` architecture, `01` threat model, `02` phase-1 image, `03` phase-2 dual-env, `decisions/` ADRs. **Read before changing design; update when you change behaviour.**
-- `crates/` — Rust workspace: `bastion-core` (shared), `bastion-env` + `bastion-host` + `bastion-health` (CLIs, port in progress), `pam-bastion-env` (cdylib scaffold). The real product tooling lands here. Bash specs live in `packages/*/bin/`.
+- `crates/` — Rust workspace: `bastion-core` (shared), `bastion-env` + `bastion-host` + `bastion-health` + `bastion-scan` (CLIs, port in progress), `pam-bastion-env` (cdylib scaffold). The real product tooling lands here. Bash specs live in `packages/*/bin/`.
 - `build/` — `build.sh` (orchestrator) → `secureboot.sh` (SB keys) + `mkrootfs.sh` (reproducible Debian rootfs) + `mkimage.sh` (LUKS2+Btrfs+signed-UKI image). `profiles/*.packages`, `hooks/`.
 - `kernel/` — `cmdline` (baked into the UKI; VM-safe), `cmdline.hardened` (opt-in aggressive; can brick boot — never bake by default).
 - `config/rootfs/` — the `/etc`+`/usr` tree synced into the image (sysctl, nftables, sshd, zram, apparmor, `bastion-env/`, and the Phase-5 monitoring configs: `prometheus/`, `alertmanager/`, `alloy/`, `loki/`, `grafana/`, `falco/`, `bastion/monitoring/`).
@@ -49,8 +51,8 @@ exactly where a C memory bug would be an auth bypass. Therefore:
 - `overlay-repo/`, `installer/`, `ci/` — scaffolded; later phases.
 
 ## Status / roadmap
-- ✅ **0** architecture · ✅ **1** minimal image · ✅ **2** dual-env · ✅ **3** installer (TUI+Calamares, real-disk FDE, profiles, dual-env wiring) · ✅ **4** hosting CLI (`bastion-host`) · ✅ **5** monitoring (Prometheus/Alertmanager/Loki/Alloy/Grafana/Falco configs + `bastion-health` + `bastion-security-metrics`). Phases 1–3 are code + syntax-checked (not yet built/booted); Phase 4's `tests/vm/hosting-test.sh` and Phase 5's `tests/vm/monitoring-test.sh` **pass (real runs, sandboxed, no root)**. Installer is testable on a dev host via `tests/vm/install-test.sh` (loopback).
-- ⬜ **6** VAPT (containerized, scope-enforced) · **7** polish/CI/release.
+- ✅ **0** architecture · ✅ **1** minimal image · ✅ **2** dual-env · ✅ **3** installer (TUI+Calamares, real-disk FDE, profiles, dual-env wiring) · ✅ **4** hosting CLI (`bastion-host`) · ✅ **5** monitoring (Prometheus/Alertmanager/Loki/Alloy/Grafana/Falco configs + `bastion-health` + `bastion-security-metrics`) · ✅ **6** VAPT (`bastion-scan`: scope-enforced, audited, containerized, assessment-only). Phases 1–3 are code + syntax-checked (not yet built/booted); Phases 4–6's `tests/vm/{hosting,monitoring,vapt}-test.sh` **pass (real runs, sandboxed, no root)** — Phase 6's test exercises the guardrails only, never a live scan. Installer is testable on a dev host via `tests/vm/install-test.sh` (loopback).
+- ⬜ **7** polish/CI/release.
 - Each phase's goals + acceptance criteria + known limitations live in its `docs/0N-*.md`.
 
 ## Build / test (Debian/Ubuntu host) — `make help` lists all targets
@@ -74,3 +76,4 @@ exactly where a C memory bug would be an auth bypass. Therefore:
 - Don't add a `bastion-env list`/count command — it would break deniability (`status` must reveal nothing about other environments).
 - Don't add any env-aware metric, label, dashboard, or a `bastion-health environments`/`list` command — same deniability rule as `bastion-env status`. Keep the Alloy drop of the `bastion-env*` auth-path journal identifiers (defence in depth so a stray log line never persists in Loki). See `docs/06-phase5-monitoring.md §Deniability`.
 - Don't switch Falco to the `kmod`/legacy-`ebpf` driver — the signed, lockdown + `module.sig_enforce` kernel refuses the out-of-tree module. Use `modern_ebpf` only.
+- Don't weaken `bastion-scan`'s gates: it must refuse without an engagement + `AUTHORIZATION_REF` + scope, keep exclusions/hard-deny winning over scope, abort a whole run on one out-of-scope target, and audit every run. Don't add an exploit/DoS/fuzz/evasion profile to the default `ALLOW_PROFILES`, and don't source the engagement file (parse it — it's data). See `docs/07-phase6-vapt.md`.

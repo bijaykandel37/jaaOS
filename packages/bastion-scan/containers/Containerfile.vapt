@@ -1,0 +1,45 @@
+# BastionOS VAPT image — pinned, minimal, runs as an unprivileged user.
+# Build (rootless):
+#   podman build -t localhost/bastionos/vapt:pinned -f packages/bastion-scan/containers/Containerfile.vapt .
+# bastion-scan runs it with --cap-drop=ALL --security-opt no-new-privileges --read-only, so the
+# container has no host privileges; the only writable path is the /out bind mount.
+#
+# Non-destructive assessment tools only (discovery / TLS hygiene / web detection). No exploit
+# frameworks, fuzzers-by-default, or stress tools are installed here — that is a deliberate
+# policy choice, not an oversight (see docs/07-phase6-vapt.md).
+
+# Pin the base by tag here; pin by DIGEST (debian@sha256:...) for a reproducible/signed build.
+FROM docker.io/library/debian:trixie-slim
+
+ARG NUCLEI_VERSION=3.3.7
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Debian-packaged tools inherit Debian security maintenance (CLAUDE.md policy).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        nmap \
+        sslscan \
+        whatweb \
+        dnsutils \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# nuclei (ProjectDiscovery) is not in Debian; fetch a pinned release. Verify the checksum in a
+# real build (the .sha256 is published alongside the release) before trusting the binary.
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64) n=amd64;; arm64) n=arm64;; *) echo "unsupported arch $arch" >&2; exit 1;; esac; \
+    url="https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_${n}.zip"; \
+    curl -fsSL "$url" -o /tmp/nuclei.zip; \
+    (cd /tmp && unzip -o nuclei.zip nuclei 2>/dev/null || (apt-get update && apt-get install -y --no-install-recommends unzip && unzip -o nuclei.zip nuclei)); \
+    install -m0755 /tmp/nuclei /usr/local/bin/nuclei; \
+    rm -rf /tmp/nuclei.zip /tmp/nuclei /var/lib/apt/lists/*
+
+# Unprivileged runtime user; /out is the bind-mounted results dir.
+RUN useradd --system --create-home --shell /usr/sbin/nologin scanner \
+    && mkdir -p /out && chown scanner:scanner /out
+USER scanner
+WORKDIR /home/scanner
+
+# No ENTRYPOINT: bastion-scan passes the exact tool command, so the image can only do what the
+# scope-enforcing wrapper tells it to.
