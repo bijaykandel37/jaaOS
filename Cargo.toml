@@ -5,6 +5,7 @@ resolver = "2"
 members = [
     "crates/bastion-core",
     "crates/bastion-env",
+    "crates/bastion-host",
     "crates/pam-bastion-env",
 ]
 

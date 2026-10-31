@@ -40,7 +40,7 @@ exactly where a C memory bug would be an auth bypass. Therefore:
 
 ## Repo map
 - `docs/` — `00` architecture, `01` threat model, `02` phase-1 image, `03` phase-2 dual-env, `decisions/` ADRs. **Read before changing design; update when you change behaviour.**
-- `crates/` — Rust workspace: `bastion-core` (shared), `bastion-env` (CLI, port in progress), `pam-bastion-env` (cdylib scaffold). The real product tooling lands here.
+- `crates/` — Rust workspace: `bastion-core` (shared), `bastion-env` + `bastion-host` (CLIs, port in progress), `pam-bastion-env` (cdylib scaffold). The real product tooling lands here. Bash specs live in `packages/*/bin/`.
 - `build/` — `build.sh` (orchestrator) → `secureboot.sh` (SB keys) + `mkrootfs.sh` (reproducible Debian rootfs) + `mkimage.sh` (LUKS2+Btrfs+signed-UKI image). `profiles/*.packages`, `hooks/`.
 - `kernel/` — `cmdline` (baked into the UKI; VM-safe), `cmdline.hardened` (opt-in aggressive; can brick boot — never bake by default).
 - `config/rootfs/` — the `/etc`+`/usr` tree synced into the image (sysctl, nftables, sshd, zram, apparmor, `bastion-env/`, …).
@@ -49,8 +49,8 @@ exactly where a C memory bug would be an auth bypass. Therefore:
 - `overlay-repo/`, `installer/`, `ci/` — scaffolded; later phases.
 
 ## Status / roadmap
-- ✅ **0** architecture · ✅ **1** minimal image · ✅ **2** dual-env · ✅ **3** installer (TUI+Calamares, real-disk FDE, profiles, dual-env wiring) — all **code + syntax-checked only**. Nothing has been built or booted yet (needs a Debian host + root VM). Installer is testable on a dev host via `tests/vm/install-test.sh` (loopback).
-- ⬜ **4** hosting CLI · **5** monitoring · **6** VAPT (containerized, scope-enforced) · **7** polish/CI/release.
+- ✅ **0** architecture · ✅ **1** minimal image · ✅ **2** dual-env · ✅ **3** installer (TUI+Calamares, real-disk FDE, profiles, dual-env wiring) · ✅ **4** hosting CLI (`bastion-host`). Phases 1–3 are code + syntax-checked (not yet built/booted); Phase 4's `tests/vm/hosting-test.sh` **passes (real run, sandboxed, no root)**. Installer is testable on a dev host via `tests/vm/install-test.sh` (loopback).
+- ⬜ **5** monitoring · **6** VAPT (containerized, scope-enforced) · **7** polish/CI/release.
 - Each phase's goals + acceptance criteria + known limitations live in its `docs/0N-*.md`.
 
 ## Build / test (Debian/Ubuntu host) — `make help` lists all targets

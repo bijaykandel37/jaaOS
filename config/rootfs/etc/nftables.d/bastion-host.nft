@@ -1,0 +1,4 @@
+# Runtime-opened ports managed by `bastion-host` (and later `bastion fw`).
+# Included by /etc/nftables.conf AFTER the inet filter table + bastion_tcp_open set are
+# defined, so these lines add elements to that existing set. Edited by tooling, not by hand.
+# (Empty is valid — comments only until bastion-host opens a port.)

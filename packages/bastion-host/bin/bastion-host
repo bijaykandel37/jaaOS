@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+# bastion-host — hosting & load-balancing CLI (prototype / behavioural spec).
+# Rust port target: crates/bastion-host (ADR 0002). Pipeline for every mutating command:
+#   generate config -> validate -> reload (zero-downtime) -> open firewall port -> register
+#   a monitoring target. Validation failure aborts before any reload or port change.
+set -euo pipefail
+
+STATE=/etc/bastion/host
+MON_TARGETS=/etc/bastion/monitoring/targets.d
+NFT_MANAGED=/etc/nftables.d/bastion-host.nft
+NGINX_AVAIL=/etc/nginx/sites-available
+NGINX_ENABLED=/etc/nginx/sites-enabled
+CADDY_DIR=/etc/caddy/bastion.d
+HAPROXY_DIR=/etc/haproxy/conf.d
+TRAEFIK_DIR=/etc/traefik/dynamic
+KEEPALIVED_DIR=/etc/keepalived/conf.d
+
+# Allow tests to redirect all writes into a sandbox.
+PREFIX="${BASTION_HOST_PREFIX:-}"
+p() { printf '%s' "${PREFIX}$1"; }   # prefix a path
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARN: $*" >&2; }
+have() { command -v "$1" >/dev/null 2>&1; }
+need_root() { [ -n "$PREFIX" ] || [ "$(id -u)" -eq 0 ] || die "run with sudo"; }
+
+open_port() { # <port>
+	local port="$1" f; f="$(p "$NFT_MANAGED")"
+	mkdir -p "$(dirname "$f")"; touch "$f"
+	grep -qF "{ $port }" "$f" 2>/dev/null || echo "add element inet filter bastion_tcp_open { $port }" >> "$f"
+	[ -n "$PREFIX" ] || nft add element inet filter bastion_tcp_open "{ $port }" 2>/dev/null || true
+}
+close_port() { # <port>
+	local port="$1" f; f="$(p "$NFT_MANAGED")"
+	[ -f "$f" ] && sed -i "/{ $port }/d" "$f"
+	[ -n "$PREFIX" ] || nft delete element inet filter bastion_tcp_open "{ $port }" 2>/dev/null || true
+}
+
+register_monitor() { # <name> <host> <port> [path]
+	local name="$1" host="$2" port="$3" path="${4:-/}" d; d="$(p "$MON_TARGETS")"
+	mkdir -p "$d"
+	printf '[{"targets":["%s:%s"],"labels":{"job":"bastion-host","instance":"%s","__metrics_path__":"%s"}}]\n' \
+		"$host" "$port" "$name" "$path" > "$d/$name.json"
+}
+unregister_monitor() { rm -f "$(p "$MON_TARGETS")/$1.json"; }
+
+reload_if_valid() { # <service> <validate cmd...>
+	local svc="$1"; shift
+	if [ -n "$PREFIX" ]; then echo "   (sandbox: would validate+reload $svc)"; return 0; fi
+	if "$@"; then
+		systemctl reload "$svc" 2>/dev/null || systemctl restart "$svc" 2>/dev/null || warn "could not reload $svc"
+	else
+		die "config validation failed for $svc — nothing reloaded"
+	fi
+}
+
+# ------------------------------------------------------------------ sites
+gen_nginx_site() { # <domain> <root> <php> <proxy> -> stdout
+	local domain="$1" root="$2" php="$3" proxy="$4"
+	echo "server {"
+	echo "    listen 80;"
+	echo "    listen [::]:80;"
+	echo "    server_name $domain;"
+	if [ -n "$proxy" ]; then
+		echo "    location / {"
+		echo "        proxy_pass $proxy;"
+		echo "        proxy_set_header Host \$host;"
+		echo "        proxy_set_header X-Real-IP \$remote_addr;"
+		echo "        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;"
+		echo "        proxy_set_header X-Forwarded-Proto \$scheme;"
+		echo "    }"
+	else
+		echo "    root $root;"
+		echo "    index index.php index.html;"
+		echo "    location / { try_files \$uri \$uri/ =404; }"
+		if [ -n "$php" ]; then
+			echo "    location ~ \\.php\$ {"
+			echo "        include snippets/fastcgi-php.conf;"
+			echo "        fastcgi_pass unix:/run/php/php${php}-fpm.sock;"
+			echo "    }"
+		fi
+	fi
+	echo "    access_log /var/log/nginx/${domain}.access.log;"
+	echo "}"
+}
+
+gen_caddy_site() { # <domain> <root> <php> <proxy> -> stdout
+	local domain="$1" root="$2" php="$3" proxy="$4"
+	echo "$domain {"
+	if [ -n "$proxy" ]; then
+		echo "    reverse_proxy $proxy"
+	else
+		echo "    root * $root"
+		[ -n "$php" ] && echo "    php_fastcgi unix//run/php/php${php}-fpm.sock"
+		echo "    file_server"
+	fi
+	echo "}"
+}
+
+site_create() {
+	need_root
+	local domain="${1:-}"; shift || true
+	[ -n "$domain" ] || die "usage: bastion-host site create <domain> [--php VER] [--tls] [--root DIR] [--proxy URL] [--engine nginx|caddy]"
+	local php="" tls=0 root="" proxy="" engine=nginx
+	while [ $# -gt 0 ]; do case "$1" in
+		--php) php="$2"; shift 2;;
+		--tls) tls=1; shift;;
+		--root) root="$2"; shift 2;;
+		--proxy) proxy="$2"; shift 2;;
+		--engine) engine="$2"; shift 2;;
+		*) die "unknown option: $1";;
+	esac; done
+	root="${root:-/srv/www/$domain}"
+	[ -n "$php" ] && [ ! -S "/run/php/php${php}-fpm.sock" ] && [ -z "$PREFIX" ] && warn "php${php}-fpm socket not found — install php${php}-fpm"
+	mkdir -p "$(p "$STATE")/sites" "$(p "$root")"
+
+	case "$engine" in
+	nginx)
+		mkdir -p "$(p "$NGINX_AVAIL")" "$(p "$NGINX_ENABLED")"
+		gen_nginx_site "$domain" "$root" "$php" "$proxy" > "$(p "$NGINX_AVAIL")/$domain.conf"
+		ln -sf "$NGINX_AVAIL/$domain.conf" "$(p "$NGINX_ENABLED")/$domain.conf"
+		reload_if_valid nginx nginx -t
+		if [ "$tls" = 1 ] && [ -z "$PREFIX" ]; then
+			if have certbot; then certbot --nginx -d "$domain" --non-interactive --agree-tos --register-unsafely-without-email || warn "certbot failed; site is HTTP-only for now";
+			else warn "certbot not installed; site is HTTP-only. Install certbot or use --engine caddy for auto-TLS."; fi
+		fi
+		;;
+	caddy)
+		mkdir -p "$(p "$CADDY_DIR")"
+		gen_caddy_site "$domain" "$root" "$php" "$proxy" > "$(p "$CADDY_DIR")/$domain.caddy"
+		reload_if_valid caddy caddy validate --config /etc/caddy/Caddyfile
+		;;
+	*) die "unknown engine: $engine (nginx|caddy)";;
+	esac
+
+	cat > "$(p "$STATE")/sites/$domain.conf" <<EOF
+domain=$domain
+engine=$engine
+php=$php
+tls=$tls
+root=$root
+proxy=$proxy
+EOF
+	open_port 80
+	[ "$tls" = 1 ] && open_port 443
+	register_monitor "site-$domain" 127.0.0.1 80 /
+	echo "site '$domain' created ($engine${proxy:+, proxy}${php:+, php $php}${tls:+, tls})."
+}
+
+site_list() { ls -1 "$(p "$STATE")/sites" 2>/dev/null | sed 's/\.conf$//' || true; }
+
+site_rm() {
+	need_root
+	local domain="${1:?usage: bastion-host site rm <domain>}"
+	local rec="$(p "$STATE")/sites/$domain.conf"; [ -f "$rec" ] || die "no such site: $domain"
+	# shellcheck disable=SC1090
+	. "$rec"
+	case "${engine:-nginx}" in
+		nginx) rm -f "$(p "$NGINX_ENABLED")/$domain.conf" "$(p "$NGINX_AVAIL")/$domain.conf"; reload_if_valid nginx nginx -t;;
+		caddy) rm -f "$(p "$CADDY_DIR")/$domain.caddy"; reload_if_valid caddy caddy validate --config /etc/caddy/Caddyfile;;
+	esac
+	rm -f "$rec"; unregister_monitor "site-$domain"
+	echo "site '$domain' removed (shared ports 80/443 left open)."
+}
+
+# ------------------------------------------------------------------ load balancers
+lb_create() {
+	need_root
+	local name="${1:-}"; shift || true
+	[ -n "$name" ] || die "usage: bastion-host lb create <name> --backend H:P [--backend ...] [--algo roundrobin|leastconn] [--health PATH] [--port N] [--engine haproxy|traefik]"
+	local algo=roundrobin health="" port=80 engine=haproxy; local -a backends=()
+	while [ $# -gt 0 ]; do case "$1" in
+		--backend) backends+=("$2"); shift 2;;
+		--algo) algo="$2"; shift 2;;
+		--health) health="$2"; shift 2;;
+		--port) port="$2"; shift 2;;
+		--engine) engine="$2"; shift 2;;
+		*) die "unknown option: $1";;
+	esac; done
+	[ "${#backends[@]}" -ge 1 ] || die "need at least one --backend H:P"
+	mkdir -p "$(p "$STATE")/lb"
+
+	case "$engine" in
+	haproxy)
+		local ha_algo; case "$algo" in leastconn) ha_algo=leastconn;; *) ha_algo=roundrobin;; esac
+		mkdir -p "$(p "$HAPROXY_DIR")"
+		{
+			echo "frontend ${name}_fe"
+			echo "    bind *:$port"
+			echo "    default_backend ${name}_be"
+			echo
+			echo "backend ${name}_be"
+			echo "    balance $ha_algo"
+			[ -n "$health" ] && { echo "    option httpchk GET $health"; echo "    http-check expect status 200"; }
+			local i=0; for b in "${backends[@]}"; do i=$((i+1)); echo "    server ${name}${i} ${b} check"; done
+		} > "$(p "$HAPROXY_DIR")/$name.cfg"
+		# Debian haproxy reads a single file; the conf.d pattern needs CONFIG=-f dir. Validate the fragment.
+		reload_if_valid haproxy haproxy -c -f "$(p "$HAPROXY_DIR")/$name.cfg"
+		;;
+	traefik)
+		mkdir -p "$(p "$TRAEFIK_DIR")"
+		{
+			echo "http:"
+			echo "  routers:"
+			echo "    ${name}:"
+			echo "      rule: \"PathPrefix(\`/\`)\""
+			echo "      service: ${name}"
+			echo "      entryPoints: [\"${name}\"]"
+			echo "  services:"
+			echo "    ${name}:"
+			echo "      loadBalancer:"
+			[ -n "$health" ] && { echo "        healthCheck:"; echo "          path: $health"; }
+			echo "        servers:"
+			for b in "${backends[@]}"; do echo "          - url: \"http://${b}\""; done
+		} > "$(p "$TRAEFIK_DIR")/$name.yml"
+		echo "   (traefik watches $TRAEFIK_DIR; no reload needed)"
+		;;
+	*) die "unknown engine: $engine (haproxy|traefik)";;
+	esac
+
+	{ echo "name=$name"; echo "engine=$engine"; echo "algo=$algo"; echo "port=$port"; echo "health=$health"; printf 'backends=%s\n' "${backends[*]}"; } > "$(p "$STATE")/lb/$name.conf"
+	open_port "$port"
+	register_monitor "lb-$name" 127.0.0.1 "$port" "${health:-/}"
+	echo "lb '$name' created ($engine, $algo, ${#backends[@]} backend(s), port $port)."
+}
+
+lb_list() { ls -1 "$(p "$STATE")/lb" 2>/dev/null | sed 's/\.conf$//' || true; }
+
+lb_rm() {
+	need_root
+	local name="${1:?usage: bastion-host lb rm <name>}"
+	local rec="$(p "$STATE")/lb/$name.conf"; [ -f "$rec" ] || die "no such lb: $name"
+	# shellcheck disable=SC1090
+	. "$rec"
+	rm -f "$(p "$HAPROXY_DIR")/$name.cfg" "$(p "$TRAEFIK_DIR")/$name.yml"
+	[ "${engine:-haproxy}" = haproxy ] && reload_if_valid haproxy true
+	rm -f "$rec"; unregister_monitor "lb-$name"; close_port "${port:-80}"
+	echo "lb '$name' removed."
+}
+
+# ------------------------------------------------------------------ HA (keepalived VRRP)
+ha_create() {
+	need_root
+	local name="${1:-}"; shift || true
+	[ -n "$name" ] || die "usage: bastion-host ha create <name> --vip CIDR --interface IF [--priority N] [--state MASTER|BACKUP] [--vrid N]"
+	local vip="" iface="" prio=100 state=BACKUP vrid=51
+	while [ $# -gt 0 ]; do case "$1" in
+		--vip) vip="$2"; shift 2;;
+		--interface) iface="$2"; shift 2;;
+		--priority) prio="$2"; shift 2;;
+		--state) state="$2"; shift 2;;
+		--vrid) vrid="$2"; shift 2;;
+		*) die "unknown option: $1";;
+	esac; done
+	[ -n "$vip" ] && [ -n "$iface" ] || die "need --vip and --interface"
+	mkdir -p "$(p "$KEEPALIVED_DIR")"
+	cat > "$(p "$KEEPALIVED_DIR")/$name.conf" <<EOF
+vrrp_instance ${name} {
+    state ${state}
+    interface ${iface}
+    virtual_router_id ${vrid}
+    priority ${prio}
+    advert_int 1
+    virtual_ipaddress {
+        ${vip}
+    }
+}
+EOF
+	reload_if_valid keepalived keepalived -t -f "$(p "$KEEPALIVED_DIR")/$name.conf"
+	echo "ha '$name' created (VIP $vip on $iface, $state, prio $prio)."
+}
+
+# ------------------------------------------------------------------ dispatch
+usage() {
+	cat <<'EOF'
+bastion-host — hosting & load balancing
+  site create <domain> [--php VER] [--tls] [--root DIR] [--proxy URL] [--engine nginx|caddy]
+  site list | site rm <domain>
+  lb create <name> --backend H:P [--backend ...] [--algo roundrobin|leastconn] [--health PATH] [--port N] [--engine haproxy|traefik]
+  lb list | lb rm <name>
+  ha create <name> --vip CIDR --interface IF [--priority N] [--state MASTER|BACKUP]
+EOF
+}
+
+group="${1:-help}"; shift || true
+action="${1:-}"; shift || true
+case "$group:$action" in
+	site:create) site_create "$@";;
+	site:list)   site_list;;
+	site:rm)     site_rm "$@";;
+	lb:create)   lb_create "$@";;
+	lb:list)     lb_list;;
+	lb:rm)       lb_rm "$@";;
+	ha:create)   ha_create "$@";;
+	help:*|*:)   usage;;
+	*) echo "unknown command: $group $action" >&2; usage; exit 2;;
+esac
