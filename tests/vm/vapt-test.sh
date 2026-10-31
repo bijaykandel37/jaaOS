@@ -136,5 +136,28 @@ cli bash "$CLI" engagement validate
 { [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "authorization"; } && ok "fresh engagement refused (blank auth)" || no "fresh engagement refused (blank auth)"
 export JAA_SCAN_ENGAGEMENT="$SBX/ok.conf"
 
+echo "== regression: command injection via target is impossible =="
+# A fake podman lets us do REAL (non-dry) runs without containers or network.
+mkdir -p "$SBX/bin" "$SBX/w"; printf '#!/bin/sh\nexit 0\n' > "$SBX/bin/podman"; chmod +x "$SBX/bin/podman"
+for bad in '$(touch${IFS}PWNED).example.com' 'a`touch${IFS}PWNED`.example.com' \
+           "https://app.example.com/';touch\${IFS}PWNED;'" 'app.example.com;touch PWNED' \
+           '10.0.0.08' '203.0.113.256' '-oX.example.com'; do
+	cli bash "$CLI" scope check "$bad"
+	printf '%s' "$OUT" | grep -q "OUT-OF-SCOPE" && ok "rejected: $bad" || no "rejected: $bad"
+done
+( cd "$SBX/w" && PATH="$SBX/bin:$PATH" JAA_SCAN_DRYRUN=0 bash "$CLI" run web '$(touch${IFS}PWNED).example.com' >/dev/null 2>&1 )
+[ ! -e "$SBX/w/PWNED" ] && ok "no host-side execution on a real run" || no "no host-side execution on a real run"
+( cd "$SBX/w" && PATH="$SBX/bin:$PATH" JAA_SCAN_DRYRUN=0 bash "$CLI" run discovery 203.0.113.5 >/dev/null 2>&1 ) \
+	&& ok "successful real run exits 0" || no "successful real run exits 0"
+
+echo "== regression: mass-targeting + malformed scope entries are refused =="
+for line in 'SCOPE_CIDRS=0.0.0.0/0' 'SCOPE_CIDRS=10.0.0.0/7' 'SCOPE_DOMAINS=com' 'SCOPE_CIDRS=999.0.0.0/24' 'MAX_RATE_PPS=100;id'; do
+	export JAA_SCAN_ENGAGEMENT="$SBX/guard.conf"; mkeng "$JAA_SCAN_ENGAGEMENT"
+	key="${line%%=*}"; sed -i "s#^$key=.*#$line#" "$JAA_SCAN_ENGAGEMENT"
+	cli bash "$CLI" engagement validate
+	[ "$RC" -ne 0 ] && ok "refused engagement with $line" || no "refused engagement with $line"
+done
+export JAA_SCAN_ENGAGEMENT="$SBX/ok.conf"
+
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

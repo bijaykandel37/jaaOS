@@ -37,6 +37,10 @@ conf_get() { [ -f "$CONF" ] && sed -n "s/^$1=//p" "$CONF" | head -1 | strip_val 
 IMAGE="$(conf_get IMAGE)";           IMAGE="${IMAGE:-$IMAGE_DEFAULT}"
 AUDIT="$(conf_get AUDIT_LOG)";       AUDIT="${AUDIT:-$AUDIT_DEFAULT}"
 RESULTS="$(conf_get RESULTS_DIR)";   RESULTS="${RESULTS:-$RESULTS_DEFAULT}"
+# The image is a podman positional: a value starting with '-' would be parsed as a flag
+# (e.g. --privileged). The results dir is a -v source, where ':' or ',' change the meaning.
+[[ "$IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]] || die "invalid IMAGE in $CONF: $IMAGE"
+[[ "$RESULTS" == /* && "$RESULTS" != *[:,]* ]] || die "RESULTS_DIR must be an absolute path without ':' or ','"
 
 # ---- engagement parsing (PARSED, never sourced — the file is data, not code) ----
 eng_get()  { sed -n "s/^$1=//p" "$ENGAGEMENT" 2>/dev/null | head -1 | strip_val; }
@@ -49,6 +53,33 @@ require_engagement() {
 	[ -n "$ref" ] || die "engagement has no AUTHORIZATION_REF — authorization is mandatory"
 	scope="$(eng_get SCOPE_CIDRS) $(eng_get SCOPE_HOSTS) $(eng_get SCOPE_DOMAINS)"
 	[ -n "${scope// /}" ] || die "engagement declares no scope (SCOPE_CIDRS/SCOPE_HOSTS/SCOPE_DOMAINS)"
+	validate_scope_entries
+}
+
+# Every scope entry must be well-formed, and the scope must not be "the internet": refuse
+# CIDRs broader than /$MIN_PREFIX and bare TLDs (e.g. "com"). This enforces the no-mass-targeting
+# promise instead of trusting the engagement author to have typed a sane scope.
+MIN_PREFIX=8
+validate_scope_entries() {
+	local x rate
+	for x in $(eng_list SCOPE_CIDRS); do
+		valid_cidr "$x" || die "invalid SCOPE_CIDRS entry: $x"
+		[ "${x#*/}" = "$x" ] || [ "${x#*/}" -ge "$MIN_PREFIX" ] \
+			|| die "SCOPE_CIDRS entry $x is broader than /$MIN_PREFIX — refusing (mass-targeting guard)"
+	done
+	for x in $(eng_list SCOPE_HOSTS); do
+		valid_ipv4 "$x" || valid_hostname "$x" || die "invalid SCOPE_HOSTS entry: $x"
+	done
+	for x in $(eng_list SCOPE_DOMAINS); do
+		{ valid_hostname "$x" && [[ "$x" == *.* ]]; } \
+			|| die "invalid SCOPE_DOMAINS entry: $x (must be a registrable domain, not a bare TLD)"
+	done
+	for x in $(eng_list EXCLUDE); do
+		valid_cidr "$x" || valid_hostname "$x" || die "invalid EXCLUDE entry: $x"
+	done
+	rate="$(eng_get MAX_RATE_PPS)"
+	[ -z "$rate" ] || { [[ "$rate" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$rate" -le 10000 ]; } \
+		|| die "MAX_RATE_PPS must be an integer 1-10000"
 }
 
 check_window() {
@@ -65,14 +96,42 @@ check_window() {
 	fi
 }
 
-# ---- IPv4 / CIDR helpers ----
-is_ipv4() { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
+# ---- target syntax ----
+# Checked BEFORE scope matching, so no unvalidated text ever reaches a command line. Targets
+# are also never passed through a shell (see container_exec), but strict syntax is what keeps
+# a "hostname" like '$(cmd).example.com' from even reaching the scope gate.
+valid_ipv4() { # dotted quad, octets 0-255, no leading zeros (same rule as jaa-core::scope)
+	[[ "$1" =~ ^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$ ]] || return 1
+	local o; for o in "${BASH_REMATCH[@]:1}"; do [ "$o" -le 255 ] || return 1; done
+}
+valid_hostname() { # RFC 1123 labels, <= 253 chars; all-numeric names must be real IPv4s
+	[ "${#1}" -le 253 ] || return 1
+	[[ "$1" =~ ^[0-9.]+$ ]] && return 1
+	[[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]]
+}
+valid_cidr() { # a.b.c.d or a.b.c.d/N
+	local net="${1%/*}" bits=32
+	[ "$1" = "$net" ] || bits="${1#*/}"
+	valid_ipv4 "$net" && [[ "$bits" =~ ^(0|[1-9][0-9]?)$ ]] && [ "$bits" -le 32 ]
+}
+# An IPv4 address, a hostname, or an http(s) URL of either.
+TARGET_URL_RE='^(https?)://([A-Za-z0-9.-]+)(:([0-9]{1,5}))?(/[A-Za-z0-9._~%/?=&+-]*)?$'
+valid_target() {
+	if [[ "$1" =~ $TARGET_URL_RE ]]; then
+		local h="${BASH_REMATCH[2]}" port="${BASH_REMATCH[4]}"
+		valid_ipv4 "$h" || valid_hostname "$h" || return 1
+		[ -z "$port" ] || { [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; }
+		return
+	fi
+	valid_ipv4 "$1" || valid_hostname "$1"
+}
+
+# ---- IPv4 / CIDR helpers (inputs already validated) ----
 ip2int() { local IFS=. a b c d; read -r a b c d <<<"$1"; echo $(( (a<<24)+(b<<16)+(c<<8)+d )); }
 in_cidr() { # <ip> <cidr-or-ip>
 	local ip="$1" cidr="$2" net bits ipi neti mask
-	net="${cidr%/*}"; bits="${cidr#*/}"; [ "$cidr" = "$net" ] && bits=32
-	is_ipv4 "$ip" && is_ipv4 "$net" || return 1
-	[[ "$bits" =~ ^[0-9]+$ ]] && [ "$bits" -le 32 ] || return 1
+	valid_ipv4 "$ip" && valid_cidr "$cidr" || return 1
+	net="${cidr%/*}"; bits=32; [ "$cidr" = "$net" ] || bits="${cidr#*/}"
 	ipi=$(ip2int "$ip"); neti=$(ip2int "$net")
 	if [ "$bits" -eq 0 ]; then mask=0; else mask=$(( (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF )); fi
 	[ $(( ipi & mask )) -eq $(( neti & mask )) ]
@@ -81,7 +140,7 @@ in_cidr() { # <ip> <cidr-or-ip>
 # Hard-deny ranges we refuse even if someone mis-scopes them (defensive rail).
 # Loopback is NOT here: self-testing 127.0.0.1 is legitimate, but only if explicitly scoped.
 hard_denied() { # <ip>
-	is_ipv4 "$1" || return 1
+	valid_ipv4 "$1" || return 1
 	in_cidr "$1" 169.254.0.0/16 && return 0   # link-local incl. cloud metadata 169.254.169.254
 	in_cidr "$1" 224.0.0.0/4     && return 0   # multicast
 	in_cidr "$1" 0.0.0.0/8       && return 0   # "this network"
@@ -89,34 +148,34 @@ hard_denied() { # <ip>
 	return 1
 }
 
-# Extract a bare host from an IP / host / URL.
+# Bare, lower-cased host of a VALIDATED target (DNS names are case-insensitive).
 target_host() { # <target>
 	local t="$1"
-	t="${t#*://}"        # strip scheme
-	t="${t%%/*}"         # strip path
-	t="${t%%:*}"         # strip :port
-	printf '%s' "$t"
+	[[ "$t" =~ $TARGET_URL_RE ]] && t="${BASH_REMATCH[2]}"
+	printf '%s' "${t,,}"
 }
 
 # Is <target> inside the engagement scope and not excluded? Prints reason on refusal.
 in_scope() { # <target>
+	valid_target "$1" || { echo "is not a valid IPv4 address, hostname, or http(s) URL"; return 1; }
 	local host; host="$(target_host "$1")"
 	# Exclusions and hard-deny first — they win over any scope entry.
 	if hard_denied "$host"; then echo "hard-denied range"; return 1; fi
 	local x
 	for x in $(eng_list EXCLUDE); do
-		if is_ipv4 "$host" && is_ipv4 "${x%/*}"; then
+		if valid_ipv4 "$host" && valid_cidr "$x"; then
 			in_cidr "$host" "$x" && { echo "in EXCLUDE ($x)"; return 1; }
-		elif [ "$host" = "$x" ]; then echo "in EXCLUDE ($x)"; return 1; fi
+		elif [ "$host" = "${x,,}" ]; then echo "in EXCLUDE ($x)"; return 1; fi
 	done
 	# IP target: must fall inside a scope CIDR.
-	if is_ipv4 "$host"; then
+	if valid_ipv4 "$host"; then
 		for x in $(eng_list SCOPE_CIDRS); do in_cidr "$host" "$x" && return 0; done
 		echo "not in any SCOPE_CIDRS"; return 1
 	fi
 	# Hostname target: exact host, or suffix of a scoped domain.
-	for x in $(eng_list SCOPE_HOSTS); do [ "$host" = "$x" ] && return 0; done
+	for x in $(eng_list SCOPE_HOSTS); do [ "$host" = "${x,,}" ] && return 0; done
 	for x in $(eng_list SCOPE_DOMAINS); do
+		x="${x,,}"
 		[ "$host" = "$x" ] && return 0
 		case "$host" in *".$x") return 0;; esac
 	done
@@ -143,22 +202,35 @@ audit() { # <profile> <image> <dryrun> <cmd> <target...>
 	fi
 }
 
-# ---- profile -> containerized tool command (non-destructive defaults) ----
-# Rootless Podman: connect scan (-sT), safe NSE category only, rate-capped. Results to /out.
-profile_cmd() { # <profile> <target> <rate>
-	local p="$1" t="$2" rate="$3" host; host="$(target_host "$t")"
-	case "$p" in
-		discovery) echo "nmap -sT -sV -Pn -T3 --max-rate ${rate} --script=safe -oX /out/${host}.nmap.xml ${host}";;
-		tls)       echo "sslscan --xml=/out/${host}.sslscan.xml ${host}";;
-		web)       echo "sh -c 'whatweb --log-brief=/out/${host}.whatweb.txt ${t}; nuclei -u ${t} -rl ${rate} -severity info,low,medium,high,critical -o /out/${host}.nuclei.txt'";;
-		*) return 1;;
-	esac
+# ---- containerized execution ----
+# Rootless, all caps dropped, no new privileges, read-only rootfs, results bind-mounted.
+# The tool argv goes straight to podman as an ARRAY — there is no shell on the host (no eval)
+# and none in the container (no `sh -c`), so target text can never be interpreted as code.
+# Each invocation is audited (with its exact, shell-quoted argv) before it runs.
+container_exec() { # <profile> <target> <tool argv...>
+	local profile="$1" target="$2"; shift 2
+	local -a cmd=(podman run --rm --network=slirp4netns --cap-drop=ALL
+		--security-opt no-new-privileges=true --read-only --tmpfs /tmp
+		-v "$RESULTS:/out:Z" "$IMAGE" "$@")
+	local shown; shown="$(printf '%q ' "${cmd[@]}")"; shown="${shown% }"
+	audit "$profile" "$IMAGE" "$DRYRUN" "$shown" "$target"
+	if [ "$DRYRUN" = 1 ]; then echo "          $shown"; return 0; fi
+	"${cmd[@]}" || { warn "scan step exited non-zero for $target"; return 1; }
 }
 
-container_run() { # <tool-cmd> -> full podman invocation (string)
-	# Rootless, all caps dropped, no new privileges, read-only rootfs, results bind-mounted.
-	printf 'podman run --rm --network=slirp4netns --cap-drop=ALL --security-opt no-new-privileges=true --read-only --tmpfs /tmp -v %q:/out:Z %q %s' \
-		"$RESULTS" "$IMAGE" "$1"
+# Profile -> tool invocations (non-destructive defaults): connect scan (-sT), safe NSE
+# category only, rate-capped; results to /out.
+run_profile() { # <profile> <target> <rate>
+	local p="$1" t="$2" rate="$3" host rc=0; host="$(target_host "$t")"
+	case "$p" in
+		discovery) container_exec "$p" "$t" nmap -sT -sV -Pn -T3 --max-rate "$rate" --script=safe \
+				-oX "/out/$host.nmap.xml" "$host" || rc=1;;
+		tls)       container_exec "$p" "$t" sslscan "--xml=/out/$host.sslscan.xml" "$host" || rc=1;;
+		web)       container_exec "$p" "$t" whatweb "--log-brief=/out/$host.whatweb.txt" "$t" || rc=1
+		           container_exec "$p" "$t" nuclei -u "$t" -rl "$rate" \
+				-severity info,low,medium,high,critical -o "/out/$host.nuclei.txt" || rc=1;;
+	esac
+	return "$rc"
 }
 
 # ============================================================ subcommands
@@ -211,28 +283,25 @@ cmd_run() {
 	local allowed=0 p
 	for p in $(eng_list ALLOW_PROFILES); do [ "$p" = "$profile" ] && allowed=1; done
 	[ "$allowed" -eq 1 ] || die "profile '$profile' not in ALLOW_PROFILES"
+	case "$profile" in discovery|tls|web) ;; *) die "unknown profile '$profile'";; esac
 	# ALL targets must be in scope — one out-of-scope target aborts the whole run.
 	local t reason
 	for t in "$@"; do
 		if ! reason="$(in_scope "$t")"; then die "target '$t' $reason — refusing the entire run"; fi
 	done
+	[ "$DRYRUN" = 1 ] || have podman || die "podman not installed (install the 'security-lab' profile)"
 	local rate; rate="$(eng_get MAX_RATE_PPS)"; rate="${rate:-100}"
 	mkdir -p "$RESULTS" 2>/dev/null
 	echo "engagement : $(eng_get NAME)   auth: $(eng_get AUTHORIZATION_REF)"
 	echo "profile    : $profile   rate-cap: ${rate} pps   image: $IMAGE"
+	local rc=0
 	for t in "$@"; do
-		local tool full; tool="$(profile_cmd "$profile" "$t" "$rate")" || die "unknown profile '$profile'"
-		full="$(container_run "$tool")"
-		audit "$profile" "$IMAGE" "$DRYRUN" "$full" "$t"
-		if [ "$DRYRUN" = 1 ]; then
-			echo "[dry-run] $t"; echo "          $full"
-		else
-			have podman || die "podman not installed (install the 'security-lab' profile)"
-			echo "[run] $t"; eval "$full" || warn "scan of $t exited non-zero"
-		fi
+		if [ "$DRYRUN" = 1 ]; then echo "[dry-run] $t"; else echo "[run] $t"; fi
+		run_profile "$profile" "$t" "$rate" || rc=1
 	done
 	echo "results in $RESULTS ; audit in $AUDIT"
-	[ "$DRYRUN" = 1 ] && note "DRY-RUN: nothing was executed or sent over the network."
+	if [ "$DRYRUN" = 1 ]; then note "DRY-RUN: nothing was executed or sent over the network."; fi
+	return "$rc"
 }
 
 cmd_report() {
