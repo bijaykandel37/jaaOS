@@ -9,7 +9,10 @@ use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "bastion-update", about = "Snapshot-bracketed system update/rollback")]
+#[command(
+    name = "bastion-update",
+    about = "Snapshot-bracketed system update/rollback"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,

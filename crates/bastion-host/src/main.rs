@@ -9,7 +9,10 @@ use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "bastion-host", about = "Create web sites and load balancers safely")]
+#[command(
+    name = "bastion-host",
+    about = "Create web sites and load balancers safely"
+)]
 struct Cli {
     #[command(subcommand)]
     group: Group,

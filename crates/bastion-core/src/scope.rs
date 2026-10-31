@@ -52,7 +52,7 @@ pub fn hard_denied(ip: &str) -> bool {
     in_cidr(ip, "169.254.0.0/16")   // link-local incl. cloud metadata 169.254.169.254
         || in_cidr(ip, "224.0.0.0/4") // multicast
         || in_cidr(ip, "0.0.0.0/8")   // "this network"
-        || ip == "255.255.255.255"    // broadcast
+        || ip == "255.255.255.255" // broadcast
 }
 
 /// Extract the bare host from an IP / host / URL (strip scheme, path, and `:port`).
@@ -140,7 +140,10 @@ mod tests {
 
     #[test]
     fn host_extraction() {
-        assert_eq!(target_host("https://app.example.com/login?x=1"), "app.example.com");
+        assert_eq!(
+            target_host("https://app.example.com/login?x=1"),
+            "app.example.com"
+        );
         assert_eq!(target_host("app.example.com:8443"), "app.example.com");
         assert_eq!(target_host("203.0.113.5"), "203.0.113.5");
     }
@@ -163,6 +166,9 @@ mod tests {
             cidrs: vec!["169.254.0.0/16".into()],
             ..Default::default()
         };
-        assert_eq!(s.allows("169.254.169.254").unwrap_err(), "hard-denied range");
+        assert_eq!(
+            s.allows("169.254.169.254").unwrap_err(),
+            "hard-denied range"
+        );
     }
 }
