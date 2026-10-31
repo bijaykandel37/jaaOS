@@ -8,12 +8,15 @@ help: ## Show this help
 
 deps: ## Install host build/test dependencies (Debian/Ubuntu)
 	sudo apt update && sudo apt install -y \
-	  mmdebstrap uidmap gdisk cryptsetup-bin btrfs-progs dosfstools \
+	  mmdebstrap uidmap debian-archive-keyring gdisk cryptsetup-bin btrfs-progs dosfstools \
 	  sbsigntool efitools openssl uuid-runtime \
 	  qemu-system-x86 qemu-utils ovmf swtpm shellcheck
 
 keys: ## Generate Secure Boot keys (idempotent)
 	bash build/secureboot.sh
+
+keyring: ## Fetch + verify the Debian archive keyring from the pinned snapshot
+	bash build/fetch-keyring.sh
 
 rootfs: ## Build the reproducible Debian rootfs tarball (out/rootfs.tar)
 	bash build/mkrootfs.sh
@@ -56,4 +59,4 @@ lint: ## bash -n + shellcheck every shell script
 clean: ## Remove build outputs (out/)
 	rm -rf out
 
-.PHONY: help deps keys rootfs image vm live release test rust rust-lint rust-test pam lint clean
+.PHONY: help deps keys keyring rootfs image vm live release test rust rust-lint rust-test pam lint clean

@@ -26,9 +26,41 @@ command -v mmdebstrap >/dev/null 2>&1 || {
 	exit 1
 }
 
-# Comma-separated include list from the profile file (strip comments/blank lines).
-PKGS="$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$ROOT/build/profiles/minimal.packages" \
-	| tr -d '[:space:]' | paste -sd, -)"
+# Debian archive keyring — needed to verify the (Debian) snapshot archive's signatures. It is
+# NOT installed by default on non-Debian hosts (e.g. Ubuntu ships only ubuntu-archive-keyring),
+# and even when present it is often TOO OLD to contain the Debian 13 (trixie) keys — both make
+# mmdebstrap fail with "NO_PUBKEY / repository is not signed". We therefore default to a keyring
+# pulled from the pinned snapshot by build/fetch-keyring.sh (known to carry the trixie keys), and
+# pass it to mmdebstrap explicitly so verification is deterministic regardless of the host distro.
+# Override with KEYRING=/path to use your own.
+KEYRING="${KEYRING:-}"
+if [ -z "$KEYRING" ]; then
+	KEYRING="$ROOT/build/keyrings/debian-archive-keyring.gpg"
+	if [ ! -f "$KEYRING" ]; then
+		echo "Debian archive keyring not cached — fetching it from snapshot $SNAPSHOT…"
+		SNAPSHOT="$SNAPSHOT" "$ROOT/build/fetch-keyring.sh"
+	fi
+fi
+if [ ! -f "$KEYRING" ]; then
+	echo "Debian archive keyring not found at: $KEYRING" >&2
+	echo "Fetch it (also run by 'make keyring'):  SNAPSHOT=$SNAPSHOT build/fetch-keyring.sh" >&2
+	exit 1
+fi
+echo "Using archive keyring: $KEYRING"
+
+# apt's acquire sandbox (user _apt) cannot traverse a 0750 home directory, so it cannot read a
+# keyring that lives under $HOME (the usual repo checkout). Stage a world-readable copy in /tmp
+# for the duration of the build; apt then verifies the snapshot archive against it.
+KR_STAGE="$(mktemp -p "${TMPDIR:-/tmp}" bastion-keyring.XXXXXX.gpg)"
+cp "$KEYRING" "$KR_STAGE"
+chmod 0644 "$KR_STAGE"
+trap 'rm -f "$KR_STAGE"' EXIT
+
+# Comma-separated include list from the profile file: drop comments, strip whitespace WITHIN each
+# line (but keep line breaks), drop blank lines, then join with commas. (Using `tr -d` here would
+# also delete the newlines and mash every package name into one invalid token.)
+PKGS="$(sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' "$ROOT/build/profiles/minimal.packages" \
+	| paste -sd, -)"
 
 echo "Building rootfs: suite=$SUITE arch=$ARCH snapshot=$SNAPSHOT"
 echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
@@ -38,6 +70,7 @@ mmdebstrap \
 	--variant=minbase \
 	--architectures="$ARCH" \
 	--components="$COMPONENTS" \
+	--keyring="$KR_STAGE" \
 	--include="$PKGS" \
 	--aptopt='Acquire::Check-Valid-Until "false";' \
 	--dpkgopt='path-exclude=/usr/share/doc/*' \
@@ -48,7 +81,7 @@ mmdebstrap \
 	--customize-hook="chroot \$1 rm -f /tmp/10-customize.sh" \
 	"$SUITE" \
 	"$OUT/rootfs.tar" \
-	"deb ${MIRROR} ${SUITE} ${COMPONENTS}" \
-	"deb ${SECMIRROR} ${SUITE}-security ${COMPONENTS}"
+	"deb [signed-by=${KR_STAGE}] ${MIRROR} ${SUITE} ${COMPONENTS}" \
+	"deb [signed-by=${KR_STAGE}] ${SECMIRROR} ${SUITE}-security ${COMPONENTS}"
 
 echo "Wrote $OUT/rootfs.tar ($(du -h "$OUT/rootfs.tar" | cut -f1))"

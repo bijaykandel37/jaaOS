@@ -11,6 +11,7 @@ intel-microcode
 systemd
 systemd-sysv
 systemd-boot
+systemd-boot-efi
 systemd-ukify
 systemd-resolved
 systemd-timesyncd
@@ -53,6 +54,7 @@ vim-tiny
 nano
 curl
 wget
+zstd
 htop
 pciutils
 usbutils

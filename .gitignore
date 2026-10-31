@@ -14,3 +14,6 @@ overlay-repo/keys/
 # editor / os
 .DS_Store
 *.swp
+
+# Fetched Debian archive keyring (reproduced by build/fetch-keyring.sh)
+build/keyrings/

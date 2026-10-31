@@ -6,6 +6,14 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
+# Do NOT inherit the host's locale/home environment into the chroot. In particular a
+# snap-provided LOCPATH (e.g. from VS Code: /snap/code/.../usr/lib/locale) points at a path that
+# does not exist inside the chroot, which makes locale-gen/update-locale fail with "invalid
+# locale settings". Neutralize those; the target locale is configured explicitly below.
+unset LOCPATH LANGUAGE LC_ALL LC_CTYPE LC_MESSAGES LC_NUMERIC LC_TIME LC_COLLATE \
+	LC_MONETARY LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT LC_IDENTIFICATION 2>/dev/null || true
+export LANG=C.UTF-8 HOME=/root
+
 # --- locale / time / identity ---
 echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 locale-gen
