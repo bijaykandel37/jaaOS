@@ -1,4 +1,4 @@
-# BastionOS — Server profile EXTRAS (installed on top of minimal.packages).
+# jaaOS — Server profile EXTRAS (installed on top of minimal.packages).
 # Starter set; the hosting CLI (Phase 4) and monitoring stack (Phase 5) expand this.
 
 # Rootless containers (default runtime)
@@ -18,7 +18,7 @@ aide
 aide-common
 #
 # "full" mode adds Grafana + Loki + Alloy + Falco. These are NOT in Debian main; they come from
-# the vendors' own signed APT repos, added via the BastionOS overlay (see
+# the vendors' own signed APT repos, added via the jaaOS overlay (see
 # docs/06-phase5-monitoring.md §Install). Listed here as a reminder, commented so this profile
 # stays installable from Debian alone:
 #   grafana            # grafana.com apt repo

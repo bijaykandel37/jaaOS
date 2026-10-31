@@ -9,16 +9,16 @@
 #   1. reuse out/rootfs.tar (build/mkrootfs.sh) as the live filesystem,
 #   2. add live-boot + a desktop/installer so it boots to a session with Calamares,
 #   3. pack it to squashfs, assemble an EFI-bootable ISO with the SIGNED kernel/UKI path,
-#   4. the live session offers `bastion-install` (TUI) and Calamares (GUI) from Phase 3.
+#   4. the live session offers `jaa-install` (TUI) and Calamares (GUI) from Phase 3.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/out"
 ROOTFS_TAR="$OUT/rootfs.tar"
 WORK="$OUT/live"
-ISO="$OUT/bastionos-live.iso"
+ISO="$OUT/jaaos-live.iso"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "mklive: missing '$1' — sudo apt install $2" >&2; exit 1; }; }
-echo "== BastionOS live ISO (Phase 7 scaffold) =="
+echo "== jaaOS live ISO (Phase 7 scaffold) =="
 need mksquashfs squashfs-tools
 need xorriso xorriso
 [ -f "$ROOTFS_TAR" ] || { echo "mklive: $ROOTFS_TAR not found — run 'make rootfs' first" >&2; exit 1; }
@@ -44,7 +44,7 @@ mksquashfs "$WORK/chroot" "$WORK/iso/live/filesystem.squashfs" -noappend -comp z
 #    build/mkimage.sh so Secure Boot stays intact; here we only lay out the tree.
 echo "TODO(real build): place the signed systemd-boot/UKI under $WORK/iso/EFI/BOOT/BOOTX64.EFI"
 xorriso -as mkisofs -o "$ISO" \
-	-V BASTIONOS_LIVE \
+	-V JAAOS_LIVE \
 	-e EFI/BOOT/BOOTX64.EFI -no-emul-boot -isohybrid-gpt-basdat \
 	"$WORK/iso" 2>/dev/null || {
 		echo "mklive: ISO assembly needs the EFI boot payload (see TODO above) — scaffold stops here."

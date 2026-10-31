@@ -51,7 +51,7 @@ echo "Using archive keyring: $KEYRING"
 # apt's acquire sandbox (user _apt) cannot traverse a 0750 home directory, so it cannot read a
 # keyring that lives under $HOME (the usual repo checkout). Stage a world-readable copy in /tmp
 # for the duration of the build; apt then verifies the snapshot archive against it.
-KR_STAGE="$(mktemp -p "${TMPDIR:-/tmp}" bastion-keyring.XXXXXX.gpg)"
+KR_STAGE="$(mktemp -p "${TMPDIR:-/tmp}" jaa-keyring.XXXXXX.gpg)"
 cp "$KEYRING" "$KR_STAGE"
 chmod 0644 "$KR_STAGE"
 trap 'rm -f "$KR_STAGE"' EXIT

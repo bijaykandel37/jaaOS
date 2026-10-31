@@ -1,5 +1,5 @@
-# BastionOS — prometheus daemon options (Phase 5).
-# Bind to localhost only; retention kept short by default (lite mode). `bastion-health enable`
+# jaaOS — prometheus daemon options (Phase 5).
+# Bind to localhost only; retention kept short by default (lite mode). `jaa-health enable`
 # rewrites the retention to match the selected mode (lite=7d, full=30d).
 # Shorter retention also means less historical activity-timing data persists on disk — a small
 # mitigation, NOT a deniability guarantee (see docs/06-phase5-monitoring.md §Deniability).

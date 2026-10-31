@@ -1,7 +1,7 @@
-### BastionOS — Alertmanager configuration (Phase 5, "full" mode only).
+### jaaOS — Alertmanager configuration (Phase 5, "full" mode only).
 #
 # HONEST DEFAULT: no external destination is wired. Out of the box, alerts are grouped and
-# held locally — Alertmanager's own UI/API (127.0.0.1:9093) and `bastion-health alerts` are
+# held locally — Alertmanager's own UI/API (127.0.0.1:9093) and `jaa-health alerts` are
 # how you see them. We ship NO email/Slack/webhook credentials, because a distro must not
 # guess your infrastructure. Uncomment and fill ONE receiver below to actually get notified.
 #
@@ -30,9 +30,9 @@ receivers:
   # - name: email
   #   email_configs:
   #     - to: "ops@example.com"
-  #       from: "bastion@example.com"
+  #       from: "jaa@example.com"
   #       smarthost: "smtp.example.com:587"
-  #       auth_username: "bastion@example.com"
+  #       auth_username: "jaa@example.com"
   #       auth_password: "CHANGE_ME"     # better: use auth_password_file
   #
   # - name: webhook

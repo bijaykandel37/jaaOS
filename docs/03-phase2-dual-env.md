@@ -1,13 +1,13 @@
-# BastionOS — Phase 2: Dual-password environments (design + prototype)
+# jaaOS — Phase 2: Dual-password environments (design + prototype)
 
 Status: **design complete; prototype written and syntax-checked; not yet run end-to-end**
 (the crypto/PAM/mount flow needs a root VM — see Test plan and Known limitations). This is
-the most safety-critical component in BastionOS, so read §1 and §9 before trusting it.
+the most safety-critical component in jaaOS, so read §1 and §9 before trusting it.
 
 > **One-line truth, repeated from the threat model:** this feature isolates two homes' *contents*
 > strongly at rest and hides the second environment from *opportunistic* inspection. It does
 > **not** reliably hide that a second environment exists from a competent forensic examiner, from
-> anyone who knows you run BastionOS, or from malware that got root — and it is no defense against
+> anyone who knows you run jaaOS, or from malware that got root — and it is no defense against
 > legal compulsion.
 
 ---
@@ -58,7 +58,7 @@ the auth/session/leakage layers.
 
 **Honest answer to the two questions the brief demands:**
 - *Can B's existence be hidden from root while A is unlocked?* **No, not reliably.** Root in A
-  can read the BastionOS tooling and PAM config (which announce the feature exists), inspect the
+  can read the jaaOS tooling and PAM config (which announce the feature exists), inspect the
   raw device, and — worst — install persistence that captures B's password the next time it is
   typed. What is protected is B's **contents** (B is not mapped and its key is not in memory).
 - *Can B's existence be hidden from a forensic disk image?* **Contents: yes** (crypto). **Existence:
@@ -75,10 +75,10 @@ The user's shadow password field is set to `!` (locked) — **no hash at all**. 
 - A stolen `/etc/shadow` reveals *zero* passwords. It cannot show that two exist, because it
   shows none, and a locked field is completely ordinary (service accounts use it), so it is not
   itself a tell.
-- All authentication for the user flows through the BastionOS PAM entry (§4), which succeeds iff
+- All authentication for the user flows through the jaaOS PAM entry (§4), which succeeds iff
   the entered password decrypts one of the volumes. `pam_unix` for this user always fails
   (locked), so it never contributes a decision and never needs a stored secret.
-- Fail-closed: if the BastionOS PAM entry is removed or the volumes are gone, the account simply
+- Fail-closed: if the jaaOS PAM entry is removed or the volumes are gone, the account simply
   cannot authenticate — it never silently falls back to a weaker method.
 
 The volume passwords live **only** in their LUKS/Shufflecake key material on the encrypted
@@ -92,11 +92,11 @@ device, never in any system database.
 
 A buggy custom PAM module is an auth bypass or a lockout. Following the Phase-0 rule *prefer
 proven components*, the **running prototype uses the audited, upstream `pam_exec.so`** to invoke
-a helper, `bastion-env-pam`. A native module (`pam_bastion_env.c`, in
-`packages/bastion-env/pam_module/`) is provided as a compilable skeleton for the eventual native
+a helper, `jaa-env-pam`. A native module (`pam_jaa_env.c`, in
+`packages/jaa-env/pam_module/`) is provided as a compilable skeleton for the eventual native
 integration **after security review** — it is not the trusted path yet, and is clearly banner-marked.
 
-### 4.2 The provider contract (`packages/bastion-env/providers/<name>`)
+### 4.2 The provider contract (`packages/jaa-env/providers/<name>`)
 
 Each provider is an executable implementing these verbs (password, when needed, on **stdin**):
 
@@ -127,7 +127,7 @@ auth:
                                                                 #  with no hint that B exists
     else:                                                       # fresh login: DM / TTY / SSH-kbd
         try-unlock(password) -> opened mapper or fail
-        record {env, mapper} in /run/bastion-env/<uid> (tmpfs, 0600)
+        record {env, mapper} in /run/jaa-env/<uid> (tmpfs, 0600)
 
 open_session:
     mount the recorded mapper at /home/<user>  (+ pam_namespace gives private /tmp, /var/tmp)
@@ -174,7 +174,7 @@ password, never just a key.
   and revokes the session keyring **before** any other environment can be unlocked. Only when no
   environment is active does `try-unlock` run again.
 - **Serialization.** All state transitions take an exclusive `flock` on
-  `/run/bastion-env/lock`, so concurrent logins cannot race the mount.
+  `/run/jaa-env/lock`, so concurrent logins cannot race the mount.
 - **Concurrent logins.** Because there is one UID and one `/home/<user>`, only one environment is
   active machine-wide. A second concurrent login must `verify-active` against the live env; the
   live env's password → it shares the session's env; the other env's password → it fails (and
@@ -184,11 +184,11 @@ password, never just a key.
 
 ## 6. Recovery and backups — per environment, without revealing the other
 
-- **Recovery keys:** each LUKS volume gets a second keyslot holding a recovery key (`bastion-env
+- **Recovery keys:** each LUKS volume gets a second keyslot holding a recovery key (`jaa-env
   recover-key add` operates only on the active env). The decoy's recovery key can be disclosed
   under coercion; the hidden env's is kept off-device. In Shufflecake mode, recovery is a second
   password at that volume's level.
-- **Backups:** `bastion-env backup` operates **only on the active environment**, writing to that
+- **Backups:** `jaa-env backup` operates **only on the active environment**, writing to that
   environment's own encrypted repo (borg/restic with a per-env passphrase). Backing up B creates
   no artifact visible in A: the repo lives inside B's home or on removable media mounted only
   while B is active. There is intentionally **no command that enumerates all environments** — that
@@ -196,7 +196,7 @@ password, never just a key.
 
 ---
 
-## 7. `bastion-env status` reveals nothing about the other environment
+## 7. `jaa-env status` reveals nothing about the other environment
 
 `status` prints only: whether an environment is active and, if so, *the active one's* free space
 and backup age. It never prints a count, never names a non-active environment, and exits
@@ -230,7 +230,7 @@ How the architecture already forecloses leaks (Phase 1 + this phase), and the ho
 | kernel keyring | Scrubbed | session keyring revoked at logout; volume key in kernel only while mapped | Root while active can extract. Documented. |
 | filesystem timestamps | Shared | container/free-space mtime changes when B is used | **Deniability leak**: a forensic image can see "free space" was written recently. Hard to fully mask. Medium–high for deniability. |
 | disk-usage via monitoring | Shared | node_exporter filesystem collector | **Leak**: raw-device used-bytes includes B even when unmounted. Mitigation: collector scoped to mounted FS only + decoy sized plausibly. Residual: a careful observer can still compare. Medium. |
-| **monitoring TSDB / logs** (R-MON) | Shared | Prometheus `/var/lib/prometheus`, Loki `/var/lib/loki`, Grafana state | **Activity-timing leak**: metrics/logs collected while B is active persist in shared `/var/lib` and are readable in A or from a forensic image. Mitigations (Phase 5): the stack has **no env concept** (no env metric/label/dashboard/`bastion-health` view), Alloy **drops the dual-env auth path** so it never lands in Loki, and `lite` mode keeps retention short. Residual: timing history still persists; no deniability. Covered by "system dirs are shared / no forensic defence." Medium. |
+| **monitoring TSDB / logs** (R-MON) | Shared | Prometheus `/var/lib/prometheus`, Loki `/var/lib/loki`, Grafana state | **Activity-timing leak**: metrics/logs collected while B is active persist in shared `/var/lib` and are readable in A or from a forensic image. Mitigations (Phase 5): the stack has **no env concept** (no env metric/label/dashboard/`jaa-health` view), Alloy **drops the dual-env auth path** so it never lands in Loki, and `lite` mode keeps retention short. Residual: timing history still persists; no deniability. Covered by "system dirs are shared / no forensic defence." Medium. |
 | thumbnail / recently-used caches | Isolated | `~/.cache`, `~/.local/share` inside home | Low. |
 
 The clear residuals — user journal, NetworkManager, cron, filesystem timestamps, monitoring
@@ -245,7 +245,7 @@ documented limitations. R-MON is addressed in `docs/06-phase5-monitoring.md §De
 Defends: lost/stolen **powered-off** device; shoulder-surfing; opportunistic access; separating
 engagements/clients from personal data. **Partial:** suspended-RAM (keys in RAM for the active
 env); evil-maid (boot chain measured, hardware implant out of scope). **Does not defend:**
-coerced disclosure by an adversary who knows BastionOS; legal compulsion; **malware with root in
+coerced disclosure by an adversary who knows jaaOS; legal compulsion; **malware with root in
 the active env** (shared system dirs ⇒ it can lie in wait and read the other env on next unlock);
 forensic proof of B's *existence*. These are properties of the problem, not bugs to be fixed
 later.
@@ -256,16 +256,16 @@ later.
 
 | File | Purpose |
 |---|---|
-| `packages/bastion-env/bin/bastion-env` | User CLI: `init`, `add`, `status`, `backup`, `lock`, `recover-key`. |
-| `packages/bastion-env/bin/bastion-env-pam` | `pam_exec` helper: auth / open_session / close_session dispatch, constant-time. |
-| `packages/bastion-env/providers/luks2` | Default provider (two LUKS2 containers, identical Argon2id params). |
-| `packages/bastion-env/providers/shufflecake` | Opt-in deniable provider (drives upstream Shufflecake; honest guard if absent). |
-| `packages/bastion-env/pam/bastion-env.pamd` | PAM snippet wiring `pam_exec` + `pam_namespace` into auth/session. |
-| `packages/bastion-env/pam_module/pam_bastion_env.c` | Native PAM module **skeleton** (compilable, unaudited — not the trusted path). |
-| `packages/bastion-env/pam_module/Makefile` | Builds the skeleton module. |
-| `config/rootfs/etc/security/namespace.d/bastion.conf` | Polyinstantiated (per-env) `/tmp`, `/var/tmp`. |
-| `config/rootfs/etc/systemd/coredump.conf.d/bastion.conf` | `Storage=none` (no core dumps to shared disk). |
-| `config/rootfs/etc/bastion-env/config` | Managed-user + provider selection (installer writes it; inert until set). |
+| `packages/jaa-env/bin/jaa-env` | User CLI: `init`, `add`, `status`, `backup`, `lock`, `recover-key`. |
+| `packages/jaa-env/bin/jaa-env-pam` | `pam_exec` helper: auth / open_session / close_session dispatch, constant-time. |
+| `packages/jaa-env/providers/luks2` | Default provider (two LUKS2 containers, identical Argon2id params). |
+| `packages/jaa-env/providers/shufflecake` | Opt-in deniable provider (drives upstream Shufflecake; honest guard if absent). |
+| `packages/jaa-env/pam/jaa-env.pamd` | PAM snippet wiring `pam_exec` + `pam_namespace` into auth/session. |
+| `packages/jaa-env/pam_module/pam_jaa_env.c` | Native PAM module **skeleton** (compilable, unaudited — not the trusted path). |
+| `packages/jaa-env/pam_module/Makefile` | Builds the skeleton module. |
+| `config/rootfs/etc/security/namespace.d/jaa.conf` | Polyinstantiated (per-env) `/tmp`, `/var/tmp`. |
+| `config/rootfs/etc/systemd/coredump.conf.d/jaa.conf` | `Storage=none` (no core dumps to shared disk). |
+| `config/rootfs/etc/jaa-env/config` | Managed-user + provider selection (installer writes it; inert until set). |
 | `tests/vm/dual-env-test.sh` | Functional test: init two envs, auth with each, verify correct mount, wrong-pw fail, switch wipes, status reveals nothing, timing constant. |
 | `tests/forensic/forensic-scan.sh` | Characterizes deniability of a powered-off image (detects LUKS headers in `luks2` mode; reports what Shufflecake changes). |
 
@@ -275,11 +275,11 @@ later.
 cd /home/bijay/Public/jaaOS
 
 # Syntax-check the prototype (safe to run anywhere)
-for f in packages/bastion-env/bin/* packages/bastion-env/providers/*; do bash -n "$f" && echo "ok $f"; done
+for f in packages/jaa-env/bin/* packages/jaa-env/providers/*; do bash -n "$f" && echo "ok $f"; done
 
 # Build the native PAM module skeleton (optional; needs libpam dev headers)
 sudo apt install -y libpam0g-dev build-essential
-make -C packages/bastion-env/pam_module
+make -C packages/jaa-env/pam_module
 
 # Functional + forensic tests run INSIDE a disposable root VM (they create loopback
 # LUKS containers). DO NOT run on your workstation. In the Phase 1 VM:
@@ -289,7 +289,7 @@ sudo bash tests/forensic/forensic-scan.sh /path/to/backing.img   # deniability c
 
 ## 12. Acceptance criteria
 
-- [ ] `bastion-env init` + `bastion-env add` create two volumes with identical Argon2id params.
+- [ ] `jaa-env init` + `jaa-env add` create two volumes with identical Argon2id params.
 - [ ] Password A mounts home A; password B mounts home B; a wrong password fails like any other.
 - [ ] `verify-active` rejects the *other* env's password during sudo/su with no distinguishable
       behaviour vs. a random wrong password.
@@ -297,7 +297,7 @@ sudo bash tests/forensic/forensic-scan.sh /path/to/backing.img   # deniability c
       (measured by `dual-env-test.sh`).
 - [ ] Logout unmounts + closes + wipes before another env can unlock; concurrent logins cannot
       mount two envs.
-- [ ] `bastion-env status` output is identical whether or not a second env exists.
+- [ ] `jaa-env status` output is identical whether or not a second env exists.
 - [ ] `/tmp` is per-env; no core dumps land in shared storage; user journal is volatile.
 - [ ] `forensic-scan.sh` documents exactly what is and isn't detectable in each provider mode.
 

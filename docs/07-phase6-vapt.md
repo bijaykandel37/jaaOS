@@ -1,14 +1,14 @@
-# BastionOS — Phase 6: VAPT toolkit (`bastion-scan`)
+# jaaOS — Phase 6: VAPT toolkit (`jaa-scan`)
 
 Status: **written; guardrails exercised in a sandbox (real run, no root, no network — 
 `tests/vm/vapt-test.sh`, 28/28).** The containerized tools themselves have not been run against a
 live target here (that needs Podman + the built image + an authorized target — see Test plan).
-The bash `bastion-scan` is the behavioural spec; the Rust port target is `crates/bastion-scan`
+The bash `jaa-scan` is the behavioural spec; the Rust port target is `crates/jaa-scan`
 (ADR 0002).
 
 ## The one thing to understand first
 
-`bastion-scan` is **authorized-testing-only**. Its job is to make unauthorized or out-of-scope
+`jaa-scan` is **authorized-testing-only**. Its job is to make unauthorized or out-of-scope
 testing *hard to do by accident*. The value over running `nmap` by hand is the **guardrails**:
 
 > No engagement file, or no `AUTHORIZATION_REF`, or no scope → **refuse**.
@@ -18,25 +18,25 @@ testing *hard to do by accident*. The value over running `nmap` by hand is the *
 
 It ships **no exploits, no DoS/stress, no detection-evasion, and no mass-targeting**. The default
 profiles are non-destructive reconnaissance / vulnerability **assessment**. That is a deliberate
-line for a solo-maintained distro, not an oversight (see `packages/bastion-scan/profiles/README.md`).
+line for a solo-maintained distro, not an oversight (see `packages/jaa-scan/profiles/README.md`).
 
 ## Commands
 
 ```
-bastion-scan engagement init <name>        # scaffold ./engagement.conf
-bastion-scan engagement show | validate    # show / validate authorization + scope + window
-bastion-scan scope check <target...>       # test targets against scope WITHOUT scanning
-bastion-scan run <profile> <target...>     # run a profile against in-scope targets (audited)
-bastion-scan report                        # results + audit summary
+jaa-scan engagement init <name>        # scaffold ./engagement.conf
+jaa-scan engagement show | validate    # show / validate authorization + scope + window
+jaa-scan scope check <target...>       # test targets against scope WITHOUT scanning
+jaa-scan run <profile> <target...>     # run a profile against in-scope targets (audited)
+jaa-scan report                        # results + audit summary
 ```
 
-`BASTION_SCAN_ENGAGEMENT=<file>` picks the engagement; `BASTION_SCAN_DRYRUN=1` resolves scope and
+`JAA_SCAN_ENGAGEMENT=<file>` picks the engagement; `JAA_SCAN_DRYRUN=1` resolves scope and
 writes the audit line **without launching anything** (what the test and a dry-run use).
 
 ## The engagement file (authorization is mandatory)
 
 A parsed `KEY=value` file — **data, never sourced** (so a stray backtick can't run). Example in
-`packages/bastion-scan/engagement.example.conf`. Required: `AUTHORIZATION_REF` and at least one
+`packages/jaa-scan/engagement.example.conf`. Required: `AUTHORIZATION_REF` and at least one
 of `SCOPE_CIDRS` / `SCOPE_HOSTS` / `SCOPE_DOMAINS`. Optional: `WINDOW_START/END`, `EXCLUDE`,
 `MAX_RATE_PPS`, `ALLOW_PROFILES`, `OPERATOR`.
 
@@ -70,16 +70,16 @@ before touching anything.
 
 ## Containerized execution
 
-Tools run in the pinned image (`packages/bastion-scan/containers/Containerfile.vapt`,
+Tools run in the pinned image (`packages/jaa-scan/containers/Containerfile.vapt`,
 Debian-based, unprivileged `scanner` user) via rootless Podman:
 
 ```
 podman run --rm --network=slirp4netns --cap-drop=ALL --security-opt no-new-privileges=true \
-  --read-only --tmpfs /tmp -v <results>:/out:Z localhost/bastionos/vapt:pinned <tool cmd>
+  --read-only --tmpfs /tmp -v <results>:/out:Z localhost/jaaos/vapt:pinned <tool cmd>
 ```
 
 No capabilities, no new privileges, read-only rootfs, results to a single bind mount. The image
-has no `ENTRYPOINT`: `bastion-scan` passes the exact command, so the container can only do what
+has no `ENTRYPOINT`: `jaa-scan` passes the exact command, so the container can only do what
 the scope-enforcing wrapper tells it to.
 
 ## Profiles (non-destructive)
@@ -95,20 +95,20 @@ profiles README for the rationale and how a separately-authorized heavier tool w
 
 ## Audit
 
-Every `run` (including dry-runs) appends one JSON line to `/var/log/bastion-scan/audit.log`:
+Every `run` (including dry-runs) appends one JSON line to `/var/log/jaa-scan/audit.log`:
 timestamp, operator, engagement, `authorization_ref`, profile, targets, image, `dry_run`, and the
-exact command. Harden it append-only on a real host: `sudo chattr +a /var/log/bastion-scan/audit.log`.
+exact command. Harden it append-only on a real host: `sudo chattr +a /var/log/jaa-scan/audit.log`.
 
 ## Files in this phase
 
 | File | Purpose |
 |---|---|
-| `packages/bastion-scan/bin/bastion-scan` | The CLI (bash prototype / spec): engagement, scope gate, run, audit. |
-| `packages/bastion-scan/engagement.example.conf` | Documented example engagement (RFC 5737/2606 ranges). |
-| `packages/bastion-scan/profiles/README.md` | What each profile runs; why no exploit/DoS profile. |
-| `packages/bastion-scan/containers/Containerfile.vapt` | Pinned, unprivileged VAPT image. |
-| `config/rootfs/etc/bastion/scan/scan.conf` | Image ref, audit-log and results paths. |
-| `crates/bastion-scan/` | Rust port scaffold (clap tree). |
+| `packages/jaa-scan/bin/jaa-scan` | The CLI (bash prototype / spec): engagement, scope gate, run, audit. |
+| `packages/jaa-scan/engagement.example.conf` | Documented example engagement (RFC 5737/2606 ranges). |
+| `packages/jaa-scan/profiles/README.md` | What each profile runs; why no exploit/DoS profile. |
+| `packages/jaa-scan/containers/Containerfile.vapt` | Pinned, unprivileged VAPT image. |
+| `config/rootfs/etc/jaa/scan/scan.conf` | Image ref, audit-log and results paths. |
+| `crates/jaa-scan/` | Rust port scaffold (clap tree). |
 | `tests/vm/vapt-test.sh` | Guardrail tests — scope/auth/window/audit, no scanning. |
 
 `build/profiles/security-lab.packages` already pulls in the container runtime (podman, buildah,
@@ -118,17 +118,17 @@ skopeo, uidmap, slirp4netns) for this phase.
 
 ```bash
 cd /home/bijay/Public/jaaOS
-bash -n packages/bastion-scan/bin/bastion-scan
+bash -n packages/jaa-scan/bin/jaa-scan
 bash tests/vm/vapt-test.sh          # guardrails only — no scanning, no network, no root
 
 # On a host with rootless Podman:
-podman build -t localhost/bastionos/vapt:pinned -f packages/bastion-scan/containers/Containerfile.vapt .
-cp packages/bastion-scan/engagement.example.conf ./engagement.conf
+podman build -t localhost/jaaos/vapt:pinned -f packages/jaa-scan/containers/Containerfile.vapt .
+cp packages/jaa-scan/engagement.example.conf ./engagement.conf
 $EDITOR ./engagement.conf           # set AUTHORIZATION_REF + your OWN in-scope targets
-bastion-scan engagement validate
-bastion-scan scope check <your-target>            # prove scope before scanning
-BASTION_SCAN_DRYRUN=1 bastion-scan run discovery <your-target>   # see the exact command first
-bastion-scan run discovery <your-target>          # against a target you are authorized to test
+jaa-scan engagement validate
+jaa-scan scope check <your-target>            # prove scope before scanning
+JAA_SCAN_DRYRUN=1 jaa-scan run discovery <your-target>   # see the exact command first
+jaa-scan run discovery <your-target>          # against a target you are authorized to test
 ```
 
 ## Acceptance criteria
@@ -153,7 +153,7 @@ bastion-scan run discovery <your-target>          # against a target you are aut
    intent). Declare both the host and its CIDR if you want both enforced. Documented; a
    resolve-and-reconcile step is a later refinement.
 3. **IPv4 only** for CIDR math. IPv6 scope entries are not yet matched; add host entries instead.
-4. **bash prototype**, pending the Rust port (`crates/bastion-scan`).
+4. **bash prototype**, pending the Rust port (`crates/jaa-scan`).
 5. **nuclei is fetched from a GitHub release** in the image (not Debian); pin by version and
    verify its checksum in a real build. Debian-packaged tools (nmap/sslscan/whatweb) inherit
    Debian security maintenance.

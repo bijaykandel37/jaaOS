@@ -6,14 +6,14 @@
 
 ## Context
 
-BastionOS targets both workstations and servers, is maintained by one person, needs stability for
+jaaOS targets both workstations and servers, is maintained by one person, needs stability for
 hosting workloads, freshness for security tooling, safe updates, and full reproducibility. The two
 realistic bases are Debian stable and Arch.
 
 ## Decision
 
-Build BastionOS as a **Debian 13 (trixie) stable derivative** — a thin overlay (signed APT repo,
-meta-packages, config packages, installer preset, `bastion-*` tools), **not** a from-scratch
+Build jaaOS as a **Debian 13 (trixie) stable derivative** — a thin overlay (signed APT repo,
+meta-packages, config packages, installer preset, `jaa-*` tools), **not** a from-scratch
 distribution and **not** a kernel fork.
 
 ## Rationale

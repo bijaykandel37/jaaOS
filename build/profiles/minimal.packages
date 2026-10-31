@@ -1,4 +1,4 @@
-# BastionOS — Minimal profile package set (Debian 13 "trixie", amd64)
+# jaaOS — Minimal profile package set (Debian 13 "trixie", amd64)
 # Consumed by build/mkrootfs.sh. One package per line; # starts a comment.
 # Package names target trixie; if apt reports one missing, it is a one-line fix here.
 
@@ -6,6 +6,15 @@
 linux-image-amd64
 amd64-microcode
 intel-microcode
+# Broad device firmware (Debian non-free-firmware — already in mkrootfs's component list).
+# Enables WiFi, Bluetooth, and many wired NICs/GPUs on real hardware. Adds image size; trim
+# the per-vendor lines below if you only target known hardware or VMs (VMs need none of them).
+firmware-linux-free
+firmware-misc-nonfree
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-brcm80211
 
 # --- init / core system ---
 systemd
@@ -39,6 +48,16 @@ iputils-ping
 nftables
 openssh-server
 ca-certificates
+# Connection management + wireless/Bluetooth stacks. The drivers themselves come from the
+# kernel + firmware above; these make the hardware usable. NetworkManager handles wired + WiFi
+# and integrates with systemd-resolved (enabled in build/hooks/10-customize.sh). For a pure
+# headless server you can swap NetworkManager for systemd-networkd — see docs/02.
+network-manager
+wpasupplicant
+wireless-regdb
+iw
+rfkill
+bluez
 
 # --- MAC / audit / hardening ---
 apparmor

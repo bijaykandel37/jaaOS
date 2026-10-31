@@ -1,4 +1,4 @@
-# BastionOS — Desktop profile EXTRAS (installed on top of minimal.packages).
+# jaaOS — Desktop profile EXTRAS (installed on top of minimal.packages).
 # GNOME on Wayland + Flatpak/bubblewrap sandboxing. Polished in Phase 7.
 
 # Display manager + GNOME (Wayland)

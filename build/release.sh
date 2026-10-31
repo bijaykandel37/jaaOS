@@ -12,7 +12,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${OUT:-$ROOT/out}"
 DIST="$OUT/dist"
-IMG="$OUT/bastionos-minimal.img"
+IMG="$OUT/jaaos-minimal.img"
 ROOTFS_TAR="$OUT/rootfs.tar"
 SNAPSHOT="${SNAPSHOT:-20261001T000000Z}"
 
@@ -40,7 +40,7 @@ log "wrote SHA256SUMS over ${#artifacts[@]} artifact(s)"
 # ---- SBOM (exact package versions from the rootfs dpkg status) ----
 if [ -f "$ROOTFS_TAR" ]; then
 	{
-		echo "# BastionOS SBOM — package<TAB>version<TAB>arch, from the rootfs dpkg database."
+		echo "# jaaOS SBOM — package<TAB>version<TAB>arch, from the rootfs dpkg database."
 		echo "# For a signed CycloneDX/SPDX SBOM, run syft on the rootfs in CI; this is the lean form."
 		tar -xOf "$ROOTFS_TAR" --wildcards '*var/lib/dpkg/status' 2>/dev/null \
 			| awk '/^Package:/{p=$2} /^Version:/{v=$2} /^Architecture:/{a=$2}
@@ -59,7 +59,7 @@ commit="$(cd "$ROOT" && git rev-parse HEAD 2>/dev/null || echo unknown)"
 sde="${SOURCE_DATE_EPOCH:-$(date -u -d "$(printf '%s' "$SNAPSHOT" | sed -E 's/^(....)(..)(..)T.*/\1-\2-\3/')" +%s 2>/dev/null || echo 0)}"
 {
 	echo "{"
-	echo "  \"product\": \"BastionOS\","
+	echo "  \"product\": \"jaaOS\","
 	echo "  \"version\": \"$version\","
 	echo "  \"git_commit\": \"$commit\","
 	echo "  \"debian_snapshot\": \"$SNAPSHOT\","

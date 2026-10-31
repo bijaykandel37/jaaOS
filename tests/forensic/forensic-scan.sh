@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BastionOS Phase 2 FORENSIC / deniability characterization.
+# jaaOS Phase 2 FORENSIC / deniability characterization.
 #
 # Points an "examiner's eye" at a powered-off backing image or device and reports what is
 # detectable. It is deliberately honest: in luks2 mode it WILL find the container headers,
@@ -11,7 +11,7 @@ set -uo pipefail
 IMG="${1:?usage: forensic-scan.sh <image-or-device>}"
 [ -e "$IMG" ] || { echo "no such path: $IMG" >&2; exit 1; }
 
-echo "=== BastionOS deniability scan: $IMG ==="
+echo "=== jaaOS deniability scan: $IMG ==="
 sz="$(blockdev --getsize64 "$IMG" 2>/dev/null || stat -c%s "$IMG" 2>/dev/null || echo 0)"
 echo "size: $sz bytes"
 echo
@@ -59,6 +59,6 @@ cat <<'NOTE'
                        + presence of shufflecake tooling on the system), never proven by the
                        image alone. This is best-effort deniability, not a guarantee.
 
- In BOTH modes, a forensic examiner who knows the machine runs BastionOS has strong reason
+ In BOTH modes, a forensic examiner who knows the machine runs jaaOS has strong reason
  to suspect a hidden environment. See docs/01-threat-model.md (T5, T8) and docs/03 §9.
 NOTE

@@ -1,1 +1,1 @@
-# packages/ — source for bastion-* debs (PAM module in bastion-env/) + meta-packages.
+# packages/ — source for jaa-* debs (PAM module in jaa-env/) + meta-packages.

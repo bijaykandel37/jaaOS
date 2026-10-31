@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# BastionOS Phase 7 test: bastion-update plan ordering + safety, all in dry-run (no root, no apt,
+# jaaOS Phase 7 test: jaa-update plan ordering + safety, all in dry-run (no root, no apt,
 # no snapper). Verifies the snapshot bracket is ordered correctly and that nothing executes.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-CLI="$REPO/packages/bastion-update/bin/bastion-update"
-export BASTION_UPDATE_DRYRUN=1
+CLI="$REPO/packages/jaa-update/bin/jaa-update"
+export JAA_UPDATE_DRYRUN=1
 
 pass=0; fail=0
 ok() { echo "PASS  $1"; pass=$((pass + 1)); }

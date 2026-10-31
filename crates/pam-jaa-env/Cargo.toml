@@ -1,0 +1,18 @@
+[package]
+name = "pam-jaa-env"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "PAM module for jaaOS dual-password environments (Rust)"
+
+[lib]
+name = "pam_jaa_env"
+crate-type = ["cdylib"]
+
+[dependencies]
+# TODO (cloud): implement the auth/open_session/close_session flow via `pamsm` once the design
+# in docs/03-phase2-dual-env.md §4 has been security-reviewed. Until then the trusted path is
+# pam_exec + packages/jaa-env/bin/jaa-env-pam, and the C skeleton in
+# packages/jaa-env/pam_module/ is the native fallback.
+# pamsm = "0.5"

@@ -1,15 +1,15 @@
-# BastionOS Rust workspace. Runtime tools live here (see docs/decisions/0002).
+# jaaOS Rust workspace. Runtime tools live here (see docs/decisions/0002).
 # Build:  cargo build --release   (or `make rust`)
 [workspace]
 resolver = "2"
 members = [
-    "crates/bastion-core",
-    "crates/bastion-env",
-    "crates/bastion-host",
-    "crates/bastion-health",
-    "crates/bastion-scan",
-    "crates/bastion-update",
-    "crates/pam-bastion-env",
+    "crates/jaa-core",
+    "crates/jaa-env",
+    "crates/jaa-host",
+    "crates/jaa-health",
+    "crates/jaa-scan",
+    "crates/jaa-update",
+    "crates/pam-jaa-env",
 ]
 
 [workspace.package]

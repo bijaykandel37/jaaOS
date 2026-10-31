@@ -1,4 +1,4 @@
-# BastionOS — Phase 7: Polish, CI, release & update/rollback
+# jaaOS — Phase 7: Polish, CI, release & update/rollback
 
 Status: **CI, release tooling, the update/rollback CLI, the declarative reconciler, and the first
 Rust port are written and tested in a sandbox (real runs, no root).** The image-building and
@@ -13,11 +13,11 @@ item below.
 | CI | `.github/workflows/ci.yml` — shell lint, sandbox test suites, Rust fmt/clippy/test | written, YAML-valid; not run on GitHub here |
 | Image CI | `build-image.yml` — reproducible rootfs + signed image, artifact upload | written; needs a run on a root-capable runner |
 | Release | `release.yml` + `build/release.sh` — checksums, provenance manifest, SBOM, minisign/gpg signature | script **tested** (`release-test.sh`); workflow not run here |
-| Update | `bastion-update` — snapshot-bracketed `apply`/`rollback` | **tested** (`update-test.sh`, dry-run) |
-| Declarative | `bastion diff`/`apply` over `/etc/bastion/system.toml` | **tested** (`system-toml-test.sh`) |
-| Rust port | `bastion-core::scope` — IPv4/scope logic ported from `bastion-scan`, with unit tests | written; compiles+tests in CI (no toolchain here) |
+| Update | `jaa-update` — snapshot-bracketed `apply`/`rollback` | **tested** (`update-test.sh`, dry-run) |
+| Declarative | `jaa diff`/`apply` over `/etc/jaa/system.toml` | **tested** (`system-toml-test.sh`) |
+| Rust port | `jaa-core::scope` — IPv4/scope logic ported from `jaa-scan`, with unit tests | written; compiles+tests in CI (no toolchain here) |
 | Live ISO | `build/mklive.sh` | **scaffold**, not built/booted |
-| Cockpit | `installer/cockpit/bastion/` (optional web UI) | **scaffold**, not audited |
+| Cockpit | `installer/cockpit/jaa/` (optional web UI) | **scaffold**, not audited |
 
 ## CI (the point of "GitHub + cloud Claude Code")
 
@@ -27,7 +27,7 @@ item below.
 - **sandbox-tests** — the six root-free suites: `hosting`, `monitoring`, `vapt`, `update`,
   `release`, `system-toml`. These are exactly what `make test` runs locally.
 - **rust** — `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
-  (these enforce the ADR-0002 conventions and run the new `bastion-core::scope` unit tests).
+  (these enforce the ADR-0002 conventions and run the new `jaa-core::scope` unit tests).
 
 `build-image.yml` (manual) builds the reproducible rootfs + the encrypted, signed image on a
 hosted runner (which has root) and uploads the artifacts — but hosted runners have **no nested
@@ -48,15 +48,15 @@ KVM**, so the image is **not boot-tested** there; boot-test on a real host with 
 
 `release.yml` runs this on a `v*` tag and publishes a GitHub release.
 
-## Update & rollback (`bastion-update`)
+## Update & rollback (`jaa-update`)
 
 Every `apply` is bracketed by snapper snapshots of the root subvolume:
 
 ```
-bastion-update check               # refresh indexes, list upgradable (read-only)
-bastion-update apply               # PRE-snapshot -> apt full-upgrade -> POST-snapshot
-bastion-update rollback <number>   # roll the root subvol back; reboot to apply
-BASTION_UPDATE_DRYRUN=1 bastion-update apply   # print the plan, run nothing
+jaa-update check               # refresh indexes, list upgradable (read-only)
+jaa-update apply               # PRE-snapshot -> apt full-upgrade -> POST-snapshot
+jaa-update rollback <number>   # roll the root subvol back; reboot to apply
+JAA_UPDATE_DRYRUN=1 jaa-update apply   # print the plan, run nothing
 ```
 
 **Honest kernel limit:** the kernel is inside the immutable, Secure-Boot-signed UKI (Phase 1). A
@@ -65,17 +65,17 @@ the ESP and is replaced only by rebuilding + re-signing the image. `apply` detec
 kernel-touching upgrade and warns that the UKI must be rebuilt/re-signed, so you are never
 silently left with a kernel that will not boot under Secure Boot.
 
-## Declarative config (`bastion diff`/`apply`)
+## Declarative config (`jaa diff`/`apply`)
 
-The Phase-3 stubs are now real. `/etc/bastion/system.toml` (a small, fixed TOML subset) declares
-the profile, extra packages, services to enable/disable, and firewall TCP ports. `bastion diff`
-shows drift; `bastion apply [--dry-run]` reconciles (apt / systemctl / nft). The file is
-**parsed, not executed**. See the shipped `config/rootfs/etc/bastion/system.toml`.
+The Phase-3 stubs are now real. `/etc/jaa/system.toml` (a small, fixed TOML subset) declares
+the profile, extra packages, services to enable/disable, and firewall TCP ports. `jaa diff`
+shows drift; `jaa apply [--dry-run]` reconciles (apt / systemctl / nft). The file is
+**parsed, not executed**. See the shipped `config/rootfs/etc/jaa/system.toml`.
 
 ## First Rust port
 
-`crates/bastion-core::scope` ports the security-critical IPv4/CIDR/scope-matching from
-`bastion-scan` into shared, unit-tested Rust — the template for porting the rest of the bash
+`crates/jaa-core::scope` ports the security-critical IPv4/CIDR/scope-matching from
+`jaa-scan` into shared, unit-tested Rust — the template for porting the rest of the bash
 specs (ADR 0002). Its `#[test]`s mirror `tests/vm/vapt-test.sh`, so CI's `cargo test` pins the
 behaviour. The CLIs' Rust crates remain clap scaffolds until ported verb-by-verb; they could not
 be compiled in this environment (no toolchain), which is why the bash specs stay authoritative.
@@ -97,10 +97,10 @@ make image && make release && ls out/dist/
 - [x] `ci.yml`/`build-image.yml`/`release.yml` are valid workflow YAML. *(validated)*
 - [x] `release.sh` produces verifiable checksums, a manifest, an SBOM, and an honest
       signed/unsigned outcome. *(release-test.sh)*
-- [x] `bastion-update apply` is snapshot-bracketed and warns on kernel changes; `rollback`
+- [x] `jaa-update apply` is snapshot-bracketed and warns on kernel changes; `rollback`
       plans a snapper rollback. *(update-test.sh)*
-- [x] `bastion diff`/`apply` parse `system.toml` and reconcile only the drift. *(system-toml-test.sh)*
-- [x] `bastion-core::scope` unit tests mirror the bash scope gate. *(cargo test, in CI)*
+- [x] `jaa diff`/`apply` parse `system.toml` and reconcile only the drift. *(system-toml-test.sh)*
+- [x] `jaa-core::scope` unit tests mirror the bash scope gate. *(cargo test, in CI)*
 - [ ] On GitHub: CI is green; `build-image.yml` produces a signed image artifact.
 - [ ] On a real host: the image builds, boots (`make vm`), updates, and rolls back.
 - [ ] Live ISO boots to a session offering the TUI + Calamares installers.
@@ -117,7 +117,7 @@ make image && make release && ls out/dist/
    live-boot package set and the signed EFI boot payload are TODO; no ISO has booted.
 4. **Cockpit plugin is a starter, unaudited** UI that only runs the read-only CLIs; it is optional
    and not part of the default profiles.
-5. **Rust is ported incrementally.** Only `bastion-core::scope` is ported so far; the CLI crates
+5. **Rust is ported incrementally.** Only `jaa-core::scope` is ported so far; the CLI crates
    are still clap scaffolds delegating to the bash specs. No Rust was compiled in this
    environment — CI (or the cloud) is where `cargo build/clippy/test` actually runs.
 6. **SBOM is the lean form** (dpkg name/version/arch). A signed CycloneDX/SPDX SBOM needs `syft`

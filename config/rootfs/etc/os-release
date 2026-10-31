@@ -1,0 +1,11 @@
+NAME="jaaOS"
+PRETTY_NAME="jaaOS (Debian 13 trixie derivative)"
+ID=jaaos
+ID_LIKE=debian
+VERSION="13 (trixie)"
+VERSION_ID="13"
+VERSION_CODENAME=trixie
+ANSI_COLOR="0;34"
+HOME_URL="https://github.com/bijaykandel37/jaaOS"
+SUPPORT_URL="https://github.com/bijaykandel37/jaaOS"
+BUG_REPORT_URL="https://github.com/bijaykandel37/jaaOS/issues"

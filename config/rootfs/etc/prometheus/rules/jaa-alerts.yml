@@ -1,0 +1,97 @@
+### jaaOS — Prometheus alerting + recording rules (Phase 5).
+# Conservative, host-local, and env-agnostic (no rule references the dual-env feature).
+# Thresholds are deliberately boring defaults; tune per host.
+groups:
+  - name: jaa-availability
+    rules:
+      # A scrape target (node_exporter, or a jaa-host site/lb) stopped responding.
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Target {{ $labels.job }}/{{ $labels.instance }} is down"
+          description: "Prometheus could not scrape {{ $labels.instance }} for 2 minutes."
+
+      # A systemd unit entered the failed state (needs node_exporter's systemd collector).
+      - alert: SystemdUnitFailed
+        expr: node_systemd_unit_state{state="failed"} == 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "systemd unit {{ $labels.name }} failed"
+          description: "{{ $labels.name }} has been in the failed state for 5 minutes."
+
+  - name: jaa-capacity
+    rules:
+      - alert: DiskSpaceLow
+        expr: >
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs|overlay"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|ramfs|overlay"}) < 0.10
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Low disk space on {{ $labels.mountpoint }}"
+          description: "{{ $labels.mountpoint }} has under 10% free."
+
+      - alert: DiskSpaceCritical
+        expr: >
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs|overlay"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|ramfs|overlay"}) < 0.03
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Critically low disk space on {{ $labels.mountpoint }}"
+          description: "{{ $labels.mountpoint }} has under 3% free."
+
+      - alert: MemoryPressure
+        expr: >
+          (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 0.08
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Low available memory"
+          description: "Available memory under 8% for 10 minutes."
+
+      - alert: HighLoad
+        expr: node_load5 > (count without(cpu,mode) (node_cpu_seconds_total{mode="idle"}) * 2)
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Sustained high load average"
+          description: "5-minute load is more than 2x the CPU count."
+
+  - name: jaa-security
+    rules:
+      # Emitted by jaa-security-metrics via the node_exporter textfile collector.
+      - alert: AuditdDown
+        expr: jaa_auditd_up == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "auditd is not running"
+          description: "The audit daemon is down; security events are not being recorded."
+
+      - alert: AideChangesDetected
+        expr: jaa_aide_changes_total > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "AIDE detected filesystem changes"
+          description: "{{ $value }} added/changed/removed entries in the last AIDE check. Review /var/log/aide."
+
+      - alert: AideCheckStale
+        expr: time() - jaa_aide_last_run_timestamp_seconds > 172800
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "AIDE has not run recently"
+          description: "No successful AIDE check in over 48h; integrity drift could go unnoticed."
+
+      - alert: FalcoEvents
+        expr: increase(jaa_falco_events_total[15m]) > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "Falco raised runtime-security events"
+          description: "{{ $value }} Falco events in the last 15 minutes. Review the Falco output."

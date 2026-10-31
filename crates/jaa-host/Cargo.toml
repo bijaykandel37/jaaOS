@@ -1,0 +1,16 @@
+[package]
+name = "jaa-host"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Hosting and load-balancing CLI"
+
+[[bin]]
+name = "jaa-host"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+jaa-core = { path = "../jaa-core" }

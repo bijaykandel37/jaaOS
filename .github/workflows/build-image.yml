@@ -46,9 +46,9 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: bastionos-image
+          name: jaaos-image
           path: |
-            out/bastionos-minimal.img
+            out/jaaos-minimal.img
             out/dist/
           retention-days: 7
           if-no-files-found: error

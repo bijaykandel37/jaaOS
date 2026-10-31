@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# BastionOS Phase 4 test: exercise bastion-host config GENERATION into a sandbox prefix (no
+# jaaOS Phase 4 test: exercise jaa-host config GENERATION into a sandbox prefix (no
 # root, no live services). It asserts the right files/content are produced and the firewall +
 # monitoring side-effects are recorded. Live validation/reload happens on a real host via the
 # command pipeline (see docs/05-phase4-hosting.md).
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-CLI="$REPO/packages/bastion-host/bin/bastion-host"
+CLI="$REPO/packages/jaa-host/bin/jaa-host"
 SBX="$(mktemp -d)"
-export BASTION_HOST_PREFIX="$SBX"
+export JAA_HOST_PREFIX="$SBX"
 trap 'rm -rf "$SBX"' EXIT
 
 pass=0; fail=0
@@ -29,7 +29,7 @@ has "$f" "php8.3-fpm.sock" && ok "php-fpm socket wired" || no "php-fpm socket wi
 
 echo "== site create (caddy) =="
 bash "$CLI" site create caddy.local --engine caddy --proxy http://127.0.0.1:9000 >/dev/null
-f="$SBX/etc/caddy/bastion.d/caddy.local.caddy"
+f="$SBX/etc/caddy/jaa.d/caddy.local.caddy"
 has "$f" "reverse_proxy http://127.0.0.1:9000" && ok "caddy reverse_proxy present" || no "caddy reverse_proxy present"
 
 echo "== lb create (haproxy, leastconn, health) =="
@@ -52,10 +52,10 @@ has "$f" "virtual_ipaddress" && has "$f" "10.0.0.10/24" && ok "keepalived VIP pr
 has "$f" "state MASTER" && ok "keepalived state MASTER" || no "keepalived state MASTER"
 
 echo "== firewall + monitoring side-effects =="
-has "$SBX/etc/nftables.d/bastion-host.nft" "bastion_tcp_open { 80 }" && ok "port 80 opened" || no "port 80 opened"
-has "$SBX/etc/nftables.d/bastion-host.nft" "bastion_tcp_open { 8080 }" && ok "lb port 8080 opened" || no "lb port 8080 opened"
-[ -f "$SBX/etc/bastion/monitoring/targets.d/site-demo.local.json" ] && ok "monitoring target for site" || no "monitoring target for site"
-has "$SBX/etc/bastion/monitoring/targets.d/lb-app-lb.json" '"__metrics_path__":"/healthz"' && ok "lb monitoring target + health path" || no "lb monitoring target + health path"
+has "$SBX/etc/nftables.d/jaa-host.nft" "jaa_tcp_open { 80 }" && ok "port 80 opened" || no "port 80 opened"
+has "$SBX/etc/nftables.d/jaa-host.nft" "jaa_tcp_open { 8080 }" && ok "lb port 8080 opened" || no "lb port 8080 opened"
+[ -f "$SBX/etc/jaa/monitoring/targets.d/site-demo.local.json" ] && ok "monitoring target for site" || no "monitoring target for site"
+has "$SBX/etc/jaa/monitoring/targets.d/lb-app-lb.json" '"__metrics_path__":"/healthz"' && ok "lb monitoring target + health path" || no "lb monitoring target + health path"
 
 echo "== list =="
 bash "$CLI" site list | grep -q demo.local && ok "site list shows demo.local" || no "site list shows demo.local"

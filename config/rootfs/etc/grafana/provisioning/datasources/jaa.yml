@@ -1,0 +1,20 @@
+### jaaOS — Grafana datasource provisioning (Phase 5, "full" mode).
+# Auto-wires the local Prometheus and Loki so dashboards work on first boot with no clicks.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: jaa-prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 15s
+
+  - name: Loki
+    uid: jaa-loki
+    type: loki
+    access: proxy
+    url: http://127.0.0.1:3100
+    # Present only in full mode; harmless if Loki is not running.

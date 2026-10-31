@@ -1,4 +1,4 @@
-### BastionOS — Loki single-binary configuration (Phase 5, "full" mode only).
+### jaaOS — Loki single-binary configuration (Phase 5, "full" mode only).
 # Local log store for a single host. Filesystem storage (no object store, no cluster), bound to
 # localhost, short retention. This is a self-monitoring aid, not a long-term SIEM.
 auth_enabled: false

@@ -1,4 +1,4 @@
-# BastionOS top-level entry points. Run `make help`.
+# jaaOS top-level entry points. Run `make help`.
 SHELL := bash
 .DEFAULT_GOAL := help
 
@@ -24,7 +24,7 @@ rootfs: ## Build the reproducible Debian rootfs tarball (out/rootfs.tar)
 image: ## Build the encrypted, signed, bootable image (image step needs root)
 	bash build/build.sh
 
-vm: ## Boot out/bastionos-minimal.img in QEMU (OVMF + swtpm)
+vm: ## Boot out/jaaos-minimal.img in QEMU (OVMF + swtpm)
 	bash tests/vm/run-qemu.sh
 
 live: ## Build a live ISO from out/rootfs.tar (Phase 7 scaffold; not yet boot-tested)
@@ -48,7 +48,7 @@ rust-test: ## Run Rust unit tests
 	cargo test
 
 pam: ## Build the native C PAM module skeleton (needs libpam0g-dev)
-	$(MAKE) -C packages/bastion-env/pam_module
+	$(MAKE) -C packages/jaa-env/pam_module
 
 lint: ## bash -n + shellcheck every shell script
 	@files=$$(grep -rlE '^#!/(usr/bin/env bash|bin/sh|bin/bash)' build packages tests installer 2>/dev/null); \

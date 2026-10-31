@@ -1,9 +1,9 @@
-// BastionOS — Grafana Alloy log pipeline (Phase 5, "full" mode only).
+// jaaOS — Grafana Alloy log pipeline (Phase 5, "full" mode only).
 // Reads the systemd journal and ships to the local Loki. Alloy replaces the deprecated
 // Promtail. Validate on a real host with:  alloy validate /etc/alloy/config.alloy
 //
 // DENIABILITY GUARD (non-negotiable — see docs/06-phase5-monitoring.md §Deniability):
-//   The auth path (bastion-env, bastion-env-pam, the PAM helper) must never put
+//   The auth path (jaa-env, jaa-env-pam, the PAM helper) must never put
 //   environment-identifying text into a queryable, persisted log store. Phase 2 already makes
 //   those tools log nothing that identifies an environment; this pipeline is defence in depth:
 //   it DROPS their journal entries outright before anything reaches Loki, and it never creates
@@ -40,13 +40,13 @@ loki.relabel "journal" {
   // Drop the dual-env auth path entirely. These identifiers must not persist in Loki.
   rule {
     source_labels = ["__journal__syslog_identifier"]
-    regex         = "bastion-env|bastion-env-pam|pam_bastion_env"
+    regex         = "jaa-env|jaa-env-pam|pam_jaa_env"
     action        = "drop"
   }
   // Belt and braces: also drop by unit name, in case they run as a service.
   rule {
     source_labels = ["__journal__systemd_unit"]
-    regex         = "bastion-env.*"
+    regex         = "jaa-env.*"
     action        = "drop"
   }
 }

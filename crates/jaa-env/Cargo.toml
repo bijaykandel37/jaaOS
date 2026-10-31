@@ -1,0 +1,16 @@
+[package]
+name = "jaa-env"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Dual-password home environment manager"
+
+[[bin]]
+name = "jaa-env"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+jaa-core = { path = "../jaa-core" }

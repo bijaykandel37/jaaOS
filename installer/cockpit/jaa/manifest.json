@@ -1,0 +1,13 @@
+{
+  "//": "jaaOS Cockpit plugin (Phase 7 scaffold, optional). Install to /usr/share/cockpit/jaa/. It only RUNS the jaa-* CLIs and shows their output — the CLIs remain the source of truth. Starter UI; not audited.",
+  "version": 0,
+  "requires": { "cockpit": "300" },
+  "menu": {
+    "index": {
+      "label": "jaaOS",
+      "order": 40,
+      "path": "index.html",
+      "keywords": [ { "matches": [ "jaa", "health", "hosting", "scan" ] } ]
+    }
+  }
+}

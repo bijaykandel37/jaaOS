@@ -1,6 +1,6 @@
 # Security policy
 
-BastionOS is security tooling intended for **authorized** use on systems you own or are
+jaaOS is security tooling intended for **authorized** use on systems you own or are
 explicitly permitted to test. Please understand the honest limits of its protections before
 relying on them.
 
@@ -14,7 +14,7 @@ reproduce and the affected files/commit. There are no SLAs — this is a one-mai
 
 Phases 0–2 are **design + prototype code that has only been syntax-checked**, not built, booted,
 or security-reviewed. The PAM/crypto/boot paths are explicitly marked “prototype / unaudited”.
-Do not deploy BastionOS on data you cannot afford to lose, and do not rely on it in a real
+Do not deploy jaaOS on data you cannot afford to lose, and do not rely on it in a real
 threat scenario until it has been reviewed.
 
 ## Honest scope of the dual-password / “deniable” feature
@@ -23,7 +23,7 @@ It protects the **contents** of both home environments when the machine is **pow
 hides the second environment from **opportunistic** inspection. It does **not**:
 
 - hide that a second environment exists from a competent forensic examiner, or from anyone who
-  knows the machine runs BastionOS;
+  knows the machine runs jaaOS;
 - protect one environment from malware that gained **root** while the other was active (system
   directories are shared);
 - defend against being **legally compelled** to disclose a password.

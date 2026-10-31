@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# jaa-health — jaaOS self-monitoring CLI (prototype / behavioural spec).
+# Rust port target: crates/jaa-health (ADR 0002).
+#
+# Design contract:
+#  - Works even when the monitoring stack is DOWN: system vitals come from the kernel directly
+#    (/proc, df, systemctl, ss), and Prometheus/Alertmanager only ENRICH when reachable. A
+#    health tool that needs its own stack running is useless exactly when you need it.
+#  - DENIABILITY (non-negotiable): reveals NOTHING about dual-password environments. There is no
+#    environment enumeration, count, or label anywhere here — mirroring `jaa-env status`,
+#    which also reveals nothing. Do not add an "environments" view.
+#  - LOCAL-ONLY: all queried endpoints are 127.0.0.1; nothing is sent off the box.
+set -uo pipefail
+
+ETC="${JAA_HEALTH_PREFIX:-}/etc"                 # sandbox: redirect reads/writes
+VARLIB="${JAA_HEALTH_PREFIX:-}/var/lib"
+PROM_URL="${JAA_HEALTH_PROM:-http://127.0.0.1:9090}"
+AM_URL="${JAA_HEALTH_AM:-http://127.0.0.1:9093}"
+MODE_FILE="$ETC/jaa/monitoring/mode"
+TARGETS_D="$ETC/jaa/monitoring/targets.d"
+SECMETRICS="$VARLIB/prometheus/node-exporter/jaa-security.prom"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARN: $*" >&2; }
+have() { command -v "$1" >/dev/null 2>&1; }
+sandbox() { [ -n "${JAA_HEALTH_PREFIX:-}" ]; }
+
+# curl a local endpoint, empty on any failure (never abort the whole command).
+fetch() { have curl && curl -sf --max-time 2 "$1" 2>/dev/null || true; }
+prom_up() { [ -n "$(fetch "$PROM_URL/-/ready")" ]; }
+
+# Scalar result of an instant PromQL query, or "" if Prometheus is unreachable / empty.
+prom_scalar() { # <promql>
+	have jq || return 0
+	local q; q=$(fetch "$PROM_URL/api/v1/query?query=$1")
+	[ -n "$q" ] || return 0
+	printf '%s' "$q" | jq -r '.data.result[0].value[1] // empty' 2>/dev/null
+}
+
+sec_metric() { # <metric name> — read from the security textfile, "" if absent
+	[ -f "$SECMETRICS" ] || return 0
+	awk -v k="$1" '$1==k {print $2; exit}' "$SECMETRICS" 2>/dev/null
+}
+
+svc_state() { # <unit> -> active|inactive|unknown
+	have systemctl || { echo unknown; return; }
+	systemctl is-active "$1" 2>/dev/null || true
+}
+
+# --------------------------------------------------------------------- status
+cmd_status() {
+	local host up load cpus
+	host=$(hostname 2>/dev/null || echo "?")
+	up=$(uptime -p 2>/dev/null || cut -d' ' -f1 /proc/uptime 2>/dev/null || echo "?")
+	load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo "?")
+	cpus=$(nproc 2>/dev/null || echo "?")
+
+	echo "jaaOS health — $host"
+	echo "  uptime     : $up"
+	echo "  load/cpus  : $load  (cpus: $cpus)"
+
+	# Memory (from /proc/meminfo, in kB).
+	if [ -r /proc/meminfo ]; then
+		awk '/MemTotal/{t=$2} /MemAvailable/{a=$2}
+		     END{ if(t>0) printf "  memory     : %.0f%% used (%.1f/%.1f GiB)\n",
+		          (t-a)/t*100, (t-a)/1048576, t/1048576 }' /proc/meminfo
+	fi
+
+	# Disk (real filesystems only).
+	echo "  disk       :"
+	if have df; then
+		df -P -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs -x ramfs 2>/dev/null \
+			| awk 'NR>1 {printf "    %-24s %s used\n", $6, $5}'
+	fi
+
+	# Failed units.
+	if have systemctl; then
+		local failed
+		failed=$(systemctl --failed --no-legend 2>/dev/null | wc -l | tr -d ' ')
+		echo "  failed svc : ${failed:-0}"
+	fi
+
+	# Listening TCP ports (local picture; informational).
+	if have ss; then
+		local ports
+		ports=$(ss -ltnH 2>/dev/null | awk '{print $4}' | sed 's/.*://' | sort -un | tr '\n' ' ')
+		echo "  listening  : ${ports:-none}"
+	fi
+
+	# Security posture.
+	echo "  security   :"
+	echo "    auditd            : $(svc_state auditd)"
+	echo "    falco             : $(svc_state falco-modern-bpf)"
+	local aide_changes aide_ts aa_enforce
+	aide_changes=$(sec_metric jaa_aide_changes_total)
+	aide_ts=$(sec_metric jaa_aide_last_run_timestamp_seconds)
+	aa_enforce=$(sec_metric 'jaa_apparmor_profiles{mode="enforce"}')
+	echo "    aide changes      : ${aide_changes:-unknown}"
+	if [ -n "$aide_ts" ]; then
+		local age=$(( ($(date +%s) - ${aide_ts%.*}) / 3600 ))
+		echo "    aide last check   : ${age}h ago"
+	else
+		echo "    aide last check   : unknown"
+	fi
+	echo "    apparmor enforce  : ${aa_enforce:-unknown} profiles"
+
+	# Monitoring self-view.
+	local mode; mode=$(get_mode)
+	echo "  monitoring : mode=$mode"
+	if prom_up; then
+		local u t; u=$(prom_scalar 'sum(up)'); t=$(prom_scalar 'count(up)')
+		local firing; firing=$(prom_scalar 'sum(ALERTS{alertstate="firing"})')
+		echo "    prometheus        : up — targets ${u:-?}/${t:-?} up, alerts firing: ${firing:-0}"
+	else
+		local n; n=$(count_targets)
+		echo "    prometheus        : not reachable ($PROM_URL) — $n file_sd target(s) on disk"
+	fi
+}
+
+# --------------------------------------------------------------------- targets
+count_targets() { ls "$TARGETS_D"/*.json 2>/dev/null | wc -l | tr -d ' '; }
+
+cmd_targets() {
+	echo "Static:"
+	echo "  node         127.0.0.1:9100   /metrics"
+	echo "  prometheus   127.0.0.1:9090   /metrics"
+	echo "Discovered (jaa-host file_sd — $TARGETS_D):"
+	local any=0 f
+	for f in "$TARGETS_D"/*.json; do
+		[ -e "$f" ] || continue
+		any=1
+		if have jq; then
+			jq -r '.[] | .labels.instance as $i | .targets[] as $t
+			       | "  \($i)   \($t)   \(.labels.__metrics_path__ // "/")"' "$f" 2>/dev/null
+		else
+			echo "  (install jq to parse) $f"
+		fi
+	done
+	[ "$any" -eq 1 ] || echo "  (none — create sites/LBs with jaa-host)"
+}
+
+# --------------------------------------------------------------------- check
+# Machine-friendly: exit 0 = healthy, 1 = a threshold was crossed. For cron/CI.
+cmd_check() {
+	local rc=0 worst
+	# Disk: fail if any real filesystem is >90% used.
+	if have df; then
+		worst=$(df -P -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs -x ramfs 2>/dev/null \
+			| awk 'NR>1 {gsub(/%/,"",$5); if($5+0>90) print $6" "$5"%"}')
+		if [ -n "$worst" ]; then echo "FAIL  disk >90%: $worst"; rc=1; else echo "OK    disk"; fi
+	fi
+	# Failed systemd units.
+	if have systemctl; then
+		local failed
+		failed=$(systemctl --failed --no-legend 2>/dev/null | wc -l | tr -d ' ')
+		if [ "${failed:-0}" -gt 0 ]; then echo "FAIL  $failed failed unit(s)"; rc=1; else echo "OK    units"; fi
+	fi
+	# auditd must be running.
+	if have systemctl && ! sandbox; then
+		if [ "$(svc_state auditd)" = active ]; then echo "OK    auditd"; else echo "FAIL  auditd not active"; rc=1; fi
+	fi
+	# node_exporter reachable (skip in sandbox).
+	if ! sandbox; then
+		if [ -n "$(fetch http://127.0.0.1:9100/metrics)" ]; then echo "OK    node_exporter"; else echo "WARN  node_exporter not reachable"; fi
+	fi
+	return "$rc"
+}
+
+# --------------------------------------------------------------------- alerts
+cmd_alerts() {
+	if have jq && [ -n "$(fetch "$AM_URL/api/v2/status")" ]; then
+		fetch "$AM_URL/api/v2/alerts?active=true" \
+			| jq -r '.[] | "  [\(.labels.severity // "none")] \(.labels.alertname) — \(.annotations.summary // "")"' 2>/dev/null
+		return 0
+	fi
+	if prom_up && have jq; then
+		echo "(Alertmanager not reachable; showing Prometheus firing alerts)"
+		fetch "$PROM_URL/api/v1/alerts" \
+			| jq -r '.data.alerts[] | select(.state=="firing")
+			         | "  [\(.labels.severity // "none")] \(.labels.alertname) — \(.annotations.summary // "")"' 2>/dev/null
+		return 0
+	fi
+	echo "No alerting backend reachable (Alertmanager $AM_URL / Prometheus $PROM_URL)."
+}
+
+# --------------------------------------------------------------------- enable
+get_mode() { [ -f "$MODE_FILE" ] && sed -n 's/^MODE=//p' "$MODE_FILE" | head -1 || echo lite; }
+
+LITE_UNITS="prometheus-node-exporter prometheus"
+FULL_EXTRA="prometheus-alertmanager loki alloy grafana-server falco-modern-bpf"
+
+cmd_enable() {
+	local mode=lite
+	while [ "$#" -gt 0 ]; do case "$1" in
+		--mode) mode="${2:?}"; shift 2;;
+		*) die "unknown option: $1";;
+	esac; done
+	[ "$mode" = lite ] || [ "$mode" = full ] || die "mode must be 'lite' or 'full'"
+	sandbox || [ "$(id -u)" -eq 0 ] || die "run with sudo"
+
+	mkdir -p "$(dirname "$MODE_FILE")" "$VARLIB/prometheus/node-exporter" \
+		"${JAA_HEALTH_PREFIX:-}/var/log/falco"
+	printf 'MODE=%s\n' "$mode" > "$MODE_FILE.tmp" && mv "$MODE_FILE.tmp" "$MODE_FILE"
+
+	# Retention follows the mode (also limits how much activity-timing data persists on disk).
+	local ret=7d; [ "$mode" = full ] && ret=30d
+	local def="$ETC/default/prometheus"
+	[ -f "$def" ] && sed -i "s/--storage.tsdb.retention.time=[0-9a-z]*/--storage.tsdb.retention.time=$ret/" "$def"
+
+	echo "monitoring mode set to '$mode' (retention ${ret})"
+	local units="$LITE_UNITS"; [ "$mode" = full ] && units="$LITE_UNITS $FULL_EXTRA"
+
+	if sandbox; then echo "(sandbox: would enable: $units)"; return 0; fi
+
+	local u
+	for u in $units; do
+		if systemctl list-unit-files "${u}.service" >/dev/null 2>&1 \
+			&& systemctl cat "${u}.service" >/dev/null 2>&1; then
+			systemctl enable --now "${u}.service" 2>/dev/null \
+				&& echo "  enabled ${u}" || warn "could not enable ${u}"
+		else
+			echo "  not installed: ${u}  (install it, then re-run 'jaa-health enable --mode $mode')"
+		fi
+	done
+	# Full mode disables nothing automatically; switching full->lite leaves extras running.
+	# Stop them explicitly if you want: systemctl disable --now <unit>.
+	echo "Reach dashboards over an SSH tunnel; nothing here listens off 127.0.0.1."
+}
+
+usage() {
+	cat <<'EOF'
+jaa-health — jaaOS self-monitoring
+  status                 one-screen health summary (works even if the stack is down)
+  targets                list scrape targets (incl. jaa-host file_sd discovery)
+  check                  exit non-zero if a threshold is crossed (for cron/CI)
+  alerts                 show currently firing alerts
+  enable [--mode M]      set mode (lite|full) and enable the matching units (needs root)
+Reveals nothing about dual-password environments, by design.
+EOF
+}
+
+cmd="${1:-status}"; shift || true
+case "$cmd" in
+	status)  cmd_status "$@";;
+	targets) cmd_targets "$@";;
+	check)   cmd_check "$@";;
+	alerts)  cmd_alerts "$@";;
+	enable)  cmd_enable "$@";;
+	help|-h|--help) usage;;
+	*) echo "unknown command: $cmd (try 'jaa-health help')" >&2; exit 2;;
+esac

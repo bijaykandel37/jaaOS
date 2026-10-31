@@ -59,58 +59,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "bastion-core"
-version = "0.0.0"
-dependencies = [
- "anyhow",
-]
-
-[[package]]
-name = "bastion-env"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "bastion-core",
- "clap",
-]
-
-[[package]]
-name = "bastion-health"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "bastion-core",
- "clap",
-]
-
-[[package]]
-name = "bastion-host"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "bastion-core",
- "clap",
-]
-
-[[package]]
-name = "bastion-scan"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "bastion-core",
- "clap",
-]
-
-[[package]]
-name = "bastion-update"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "bastion-core",
- "clap",
-]
-
-[[package]]
 name = "clap"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -169,13 +117,65 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
+name = "jaa-core"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
+name = "jaa-env"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "jaa-core",
+]
+
+[[package]]
+name = "jaa-health"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "jaa-core",
+]
+
+[[package]]
+name = "jaa-host"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "jaa-core",
+]
+
+[[package]]
+name = "jaa-scan"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "jaa-core",
+]
+
+[[package]]
+name = "jaa-update"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "jaa-core",
+]
+
+[[package]]
 name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "pam-bastion-env"
+name = "pam-jaa-env"
 version = "0.0.0"
 
 [[package]]

@@ -18,5 +18,5 @@ else
 fi
 
 echo
-echo "Build complete: $ROOT/out/bastionos-minimal.img"
+echo "Build complete: $ROOT/out/jaaos-minimal.img"
 echo "Boot it with:   tests/vm/run-qemu.sh"

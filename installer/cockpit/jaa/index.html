@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<!--
+  jaaOS Cockpit page (Phase 7 scaffold, optional). It shells out to the jaa-* CLIs via
+  cockpit.spawn and shows their output — no privileged logic lives in this page. Starter UI, not
+  audited; the CLIs are the source of truth. Reach Cockpit over an SSH tunnel, like the rest of
+  the stack (nothing here opens a port by itself).
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>jaaOS</title>
+  <script src="../base1/cockpit.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1rem; }
+    button { margin: 0.2rem 0.4rem 0.2rem 0; padding: 0.4rem 0.8rem; cursor: pointer; }
+    pre { background: #0b0b0b0d; padding: 0.8rem; border-radius: 6px; overflow: auto; max-height: 60vh; }
+    h1 { font-size: 1.2rem; }
+    .note { color: #666; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>jaaOS</h1>
+  <p class="note">Runs the read-only <code>jaa-*</code> commands and shows their output. The
+  CLIs are the source of truth; this page adds no privileges of its own.</p>
+  <div>
+    <button data-cmd="health">jaa-health status</button>
+    <button data-cmd="targets">jaa-health targets</button>
+    <button data-cmd="sites">jaa-host site list</button>
+    <button data-cmd="updates">jaa-update status</button>
+  </div>
+  <pre id="out">Pick a command…</pre>
+  <script>
+    // Only fixed, read-only invocations — no free-form input is passed to the shell.
+    const CMDS = {
+      health:  ["jaa-health", "status"],
+      targets: ["jaa-health", "targets"],
+      sites:   ["jaa-host", "site", "list"],
+      updates: ["jaa-update", "status"],
+    };
+    const out = document.getElementById("out");
+    function run(key) {
+      const argv = CMDS[key];
+      if (!argv) return;
+      out.textContent = "$ " + argv.join(" ") + "\n…";
+      cockpit.spawn(argv, { err: "out", superuser: "try" })
+        .then(data => { out.textContent = data || "(no output)"; })
+        .catch(err => { out.textContent = "error: " + (err && err.message ? err.message : err); });
+    }
+    for (const b of document.querySelectorAll("button[data-cmd]")) {
+      b.addEventListener("click", () => run(b.dataset.cmd));
+    }
+    cockpit.transport.wait(() => {});
+  </script>
+</body>
+</html>

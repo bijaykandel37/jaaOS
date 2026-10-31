@@ -1,0 +1,42 @@
+### jaaOS — Falco configuration drop-in (Phase 5, "full" mode).
+# Merged over the packaged /etc/falco/falco.yaml by Falco's config.d mechanism (Falco >= 0.37).
+#
+# CRITICAL COMPATIBILITY CHOICE — engine driver:
+#   jaaOS boots a Secure Boot + lockdown=confidentiality kernel with module.sig_enforce=1.
+#   That kernel REFUSES to load the out-of-tree Falco kernel module (it is unsigned), so the
+#   legacy `kmod` driver cannot work here. We therefore use the `modern_ebpf` driver, which is
+#   CO-RE eBPF loaded through the in-tree BPF path and needs no out-of-tree module. This is the
+#   only driver that is compatible with our boot policy. Do NOT switch this to `kmod`/`ebpf`
+#   (the old probe) expecting it to work on a signed, locked-down kernel.
+engine:
+  kind: modern_ebpf
+  modern_ebpf:
+    cpus_for_each_buffer: 2
+    drop_failed_exit: true
+
+# Our custom/tuned rules live in rules.d; the packaged default rules stay as shipped so they
+# keep getting upstream updates.
+rules_files:
+  - /etc/falco/falco_rules.yaml
+  - /etc/falco/falco_rules.local.yaml
+  - /etc/falco/rules.d
+
+# Output. We log to stderr (-> journald -> Loki, minus the dropped auth path) and to a file that
+# jaa-security-metrics tallies into a Prometheus counter. No webhook/program output is wired
+# by default (same honesty stance as Alertmanager: a distro must not guess your infra).
+stdout_output:
+  enabled: true
+file_output:
+  enabled: true
+  keep_alive: false
+  filename: /var/log/falco/events.txt
+json_output: true
+json_include_output_property: true
+buffered_outputs: true
+priority: notice
+
+# No gRPC server, no HTTP output by default — keep Falco local and quiet.
+grpc:
+  enabled: false
+grpc_output:
+  enabled: false

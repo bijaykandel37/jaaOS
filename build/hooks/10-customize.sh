@@ -19,23 +19,23 @@ echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 locale-gen
 update-locale LANG=en_US.UTF-8
 ln -sf /usr/share/zoneinfo/UTC /etc/localtime
-echo "bastion" > /etc/hostname
+echo "jaa" > /etc/hostname
 cat > /etc/hosts <<'EOF'
 127.0.0.1	localhost
-127.0.1.1	bastion
+127.0.1.1	jaa
 ::1		localhost ip6-localhost ip6-loopback
 EOF
 
 # --- default user (demo credentials; change on first login / via installer) ---
-if ! id bastion >/dev/null 2>&1; then
-	useradd --create-home --shell /bin/bash --groups sudo bastion
+if ! id jaa >/dev/null 2>&1; then
+	useradd --create-home --shell /bin/bash --groups sudo jaa
 fi
-echo "bastion:bastion" | chpasswd
-echo "root:bastion"    | chpasswd
-install -d -m 0700 -o bastion -g bastion /home/bastion/.ssh
+echo "jaa:jaa" | chpasswd
+echo "root:jaa"    | chpasswd
+install -d -m 0700 -o jaa -g jaa /home/jaa/.ssh
 
 # --- make the shipped helper executable ---
-chmod 0755 /usr/local/sbin/bastion-apt-snapshot
+chmod 0755 /usr/local/sbin/jaa-apt-snapshot
 
 # --- ensure btrfs + crypto bits land in the initramfs ---
 for m in btrfs; do grep -qxF "$m" /etc/initramfs-tools/modules || echo "$m" >> /etc/initramfs-tools/modules; done
@@ -46,8 +46,10 @@ if command -v aa-enforce >/dev/null 2>&1; then
 fi
 
 # --- services: enable what the minimal profile needs, mask what it does not ---
+# NetworkManager gives wired + WiFi out of the box; bluetooth brings up the BlueZ stack.
 systemctl enable ssh nftables auditd apparmor \
-	systemd-timesyncd systemd-resolved snapper-cleanup.timer >/dev/null 2>&1 || true
+	systemd-timesyncd systemd-resolved snapper-cleanup.timer \
+	NetworkManager bluetooth >/dev/null 2>&1 || true
 systemctl mask ctrl-alt-del.target >/dev/null 2>&1 || true
 
 # resolved: point /etc/resolv.conf at the stub
@@ -55,7 +57,7 @@ ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf 2>/dev/null || tru
 
 # --- auditd: a small baseline ruleset (expanded in the monitoring phase) ---
 install -d /etc/audit/rules.d
-cat > /etc/audit/rules.d/10-bastion.rules <<'EOF'
+cat > /etc/audit/rules.d/10-jaa.rules <<'EOF'
 -D
 -b 8192
 -f 1

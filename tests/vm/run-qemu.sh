@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Boot the BastionOS image in QEMU under UEFI (OVMF) with an emulated TPM2 (swtpm).
+# Boot the jaaOS image in QEMU under UEFI (OVMF) with an emulated TPM2 (swtpm).
 # If python-virt-firmware is present, our Secure Boot keys are enrolled into the VM's
 # OVMF variables so Secure Boot is actually ENFORCED; otherwise it boots UEFI without
 # enforcement and says so (the on-disk binaries are signed either way).
 #
 #   tests/vm/run-qemu.sh [path-to-image]
 #
-# Serial console is on stdio; log in as user "bastion" (password "bastion" for the demo
-# image) or ssh to localhost:2222. LUKS passphrase at boot is the demo "bastion".
+# Serial console is on stdio; log in as user "jaa" (password "jaa" for the demo
+# image) or ssh to localhost:2222. LUKS passphrase at boot is the demo "jaa".
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-IMG="${1:-$ROOT/out/bastionos-minimal.img}"
+IMG="${1:-$ROOT/out/jaaos-minimal.img}"
 KEYS="$ROOT/build/secureboot/keys"
 WORK="$ROOT/out/vm"; mkdir -p "$WORK"
 
@@ -31,7 +31,7 @@ if command -v virt-fw-vars >/dev/null 2>&1 && [ -f "$KEYS/db.esl" ]; then
 		--add-kek "$GUID" "$KEYS/KEK.esl" \
 		--add-db  "$GUID" "$KEYS/db.esl" \
 		--secure-boot >/dev/null 2>&1; then
-		SB_NOTE="Secure Boot: ENFORCED (BastionOS keys enrolled)."
+		SB_NOTE="Secure Boot: ENFORCED (jaaOS keys enrolled)."
 	else
 		SB_NOTE="Secure Boot: enrollment failed; booting UEFI only."
 	fi

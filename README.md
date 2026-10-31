@@ -1,9 +1,9 @@
-# BastionOS
+# jaaOS
 
 A hardened, DevOps-first Linux distribution for engineers and **authorized** security
-testing. BastionOS is **not** a from-scratch distribution and **not** a kernel fork. It is
+testing. jaaOS is **not** a from-scratch distribution and **not** a kernel fork. It is
 a **Debian 13 (trixie) stable derivative** — a thin, reproducible overlay (signed APT repo,
-meta-packages, config packages, an installer preset, and a set of `bastion-*` tools) on top
+meta-packages, config packages, an installer preset, and a set of `jaa-*` tools) on top
 of Debian's base and security-maintained kernel.
 
 This structure is a deliberate consequence of the project being maintained by **one person**:
@@ -25,9 +25,9 @@ here? Read [`CLAUDE.md`](CLAUDE.md) for a fast orientation and the [`docs/`](doc
 | 1 | Minimal image: hardened kernel, LUKS2 FDE, Secure Boot (UKI), Btrfs+snapper | ✅ code, not yet built |
 | 2 | Dual-password environments: design, prototype, leakage/forensic tests | ✅ code, not yet run |
 | 3 | Installer with profiles (TUI + Calamares), real-disk FDE, dual-env wiring | ✅ code, not yet run |
-| 4 | Hosting & load-balancing CLI (`bastion-host`) | ✅ code + tests pass |
-| 5 | Self-monitoring stack (Prometheus/Loki/Grafana/Falco + `bastion-health`) | ✅ code + tests pass |
-| 6 | VAPT toolkit (containerized, scope-enforced `bastion-scan`) | ✅ code + tests pass |
+| 4 | Hosting & load-balancing CLI (`jaa-host`) | ✅ code + tests pass |
+| 5 | Self-monitoring stack (Prometheus/Loki/Grafana/Falco + `jaa-health`) | ✅ code + tests pass |
+| 6 | VAPT toolkit (containerized, scope-enforced `jaa-scan`) | ✅ code + tests pass |
 | 7 | CI, release signing, update/rollback, declarative config, first Rust port | ✅ code + tests pass (live ISO / Cockpit scaffolded) |
 
 ## Quick start (Debian/Ubuntu host)
@@ -35,21 +35,21 @@ here? Read [`CLAUDE.md`](CLAUDE.md) for a fast orientation and the [`docs/`](doc
 ```bash
 make deps      # install build/test dependencies
 make lint      # bash -n + shellcheck all scripts
-make image     # build out/bastionos-minimal.img (image step needs root)
+make image     # build out/jaaos-minimal.img (image step needs root)
 make vm        # boot it in QEMU (OVMF + swtpm)
 make help      # list every entry point
 ```
 
 ## Honesty notice (read this before trusting the security model)
 
-BastionOS includes a **dual-password / dual-home** feature: one username, two passwords, each
+jaaOS includes a **dual-password / dual-home** feature: one username, two passwords, each
 unlocking a separate encrypted home, with the goal of hiding the second environment's
 *existence*. You must understand what this does and does not do before relying on it:
 
 - It protects the **contents** of both homes well when the machine is **powered off** (LUKS2 +
   Argon2id full-disk encryption). This is strong.
 - It does **not** reliably hide the second environment's *existence* from a competent forensic
-  examiner, because the very presence of BastionOS and its tooling signals that a hidden
+  examiner, because the very presence of jaaOS and its tooling signals that a hidden
   environment *may* exist.
 - It does **not** protect the second environment from malware or a rootkit that gained
   persistence while the first environment was unlocked — the system directories are **shared**,
@@ -67,7 +67,7 @@ the feature.
 Hosting, container, monitoring, and DevOps workloads, plus **authorized** vulnerability
 assessment and penetration testing. The bundled VAPT toolkit refuses to run without an
 engagement file declaring authorized scope and an authorization reference, and logs every run
-for audit. BastionOS is for testing systems you own or are explicitly contracted to test.
+for audit. jaaOS is for testing systems you own or are explicitly contracted to test.
 
 ## Repository layout
 
@@ -77,7 +77,7 @@ for audit. BastionOS is for testing systems you own or are explicitly contracted
 | `build/` | ISO build configuration (mkosi) and per-profile package lists (`build/profiles/`). |
 | `kernel/` | Hardened kernel command line, sysctl, and module/boot config fragments. No kernel source. |
 | `overlay-repo/` | Signed APT overlay repository config (reprepro) and signing-key policy. |
-| `packages/` | Source for the `bastion-*` Debian packages, including the PAM module, and meta-packages. |
+| `packages/` | Source for the `jaa-*` Debian packages, including the PAM module, and meta-packages. |
 | `config/etc/` | The `/etc` skeleton shipped by config packages: nftables, AppArmor, auditd, sshd, systemd units. |
 | `installer/` | Calamares (graphical) and TUI installer integration. |
 | `ci/` | Reproducible build, sign, and test pipelines. |
@@ -92,14 +92,14 @@ lives in the matching `docs/0N-*.md`.
 1. ✅ **Minimal image** — hardened kernel config, FDE, Secure Boot (UKI), Btrfs snapshots.
 2. ✅ **Dual-password environments** — design, VM prototype, leakage and forensic tests.
 3. ✅ **Installer** — graphical + TUI, profile selection.
-4. ✅ **Hosting / load balancing** — `bastion-host`.
-5. ✅ **Monitoring** — local Prometheus/Loki/Grafana/Falco stack + `bastion-health`.
-6. ✅ **VAPT toolkit** — containerized, scope-enforced, audited `bastion-scan` (assessment only).
-7. ✅ **Polish/release** — CI (lint/test/rust), signed reproducible releases, `bastion-update`
-   (snapshot rollback), declarative `bastion diff`/`apply`, first Rust port; live ISO + Cockpit scaffolded.
+4. ✅ **Hosting / load balancing** — `jaa-host`.
+5. ✅ **Monitoring** — local Prometheus/Loki/Grafana/Falco stack + `jaa-health`.
+6. ✅ **VAPT toolkit** — containerized, scope-enforced, audited `jaa-scan` (assessment only).
+7. ✅ **Polish/release** — CI (lint/test/rust), signed reproducible releases, `jaa-update`
+   (snapshot rollback), declarative `jaa diff`/`apply`, first Rust port; live ISO + Cockpit scaffolded.
 
 ## License
 
-BastionOS is licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE).
+jaaOS is licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE).
 Bundled third-party components (the Debian base, and the VAPT tools in a later phase) keep their
 own licenses; the overlay repo records each component's license before redistribution.

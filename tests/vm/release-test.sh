@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BastionOS Phase 7 test: build/release.sh over FAKE artifacts in a sandbox OUT (no real image
+# jaaOS Phase 7 test: build/release.sh over FAKE artifacts in a sandbox OUT (no real image
 # build, no signing key). Verifies checksums, provenance manifest, SBOM extraction, and the
 # honest UNSIGNED fallback. Signing itself is only exercised on a real host / in CI with a key.
 set -uo pipefail
@@ -13,7 +13,7 @@ no() { echo "FAIL  $1"; fail=$((fail + 1)); }
 
 mkdir -p "$SBX/out" "$SBX/home"
 # Fake image artifact.
-head -c 4096 /dev/zero > "$SBX/out/bastionos-minimal.img"
+head -c 4096 /dev/zero > "$SBX/out/jaaos-minimal.img"
 # Fake rootfs.tar carrying a dpkg status db (for the SBOM path).
 pkgroot="$SBX/pkg"; mkdir -p "$pkgroot/var/lib/dpkg"
 cat > "$pkgroot/var/lib/dpkg/status" <<'EOF'
@@ -35,15 +35,15 @@ D="$SBX/out/dist"
 echo "== checksums =="
 [ -f "$D/SHA256SUMS" ] && ok "SHA256SUMS written" || no "SHA256SUMS written"
 ( cd "$D" && sha256sum -c SHA256SUMS >/dev/null 2>&1 ) && ok "checksums verify" || no "checksums verify"
-grep -q "bastionos-minimal.img" "$D/SHA256SUMS" && ok "image checksummed" || no "image checksummed"
+grep -q "jaaos-minimal.img" "$D/SHA256SUMS" && ok "image checksummed" || no "image checksummed"
 
 echo "== manifest =="
 if command -v jq >/dev/null 2>&1; then
 	jq -e . "$D/manifest.json" >/dev/null 2>&1 && ok "manifest.json valid JSON" || no "manifest.json valid JSON"
-	[ "$(jq -r '.product' "$D/manifest.json")" = "BastionOS" ] && ok "manifest product" || no "manifest product"
+	[ "$(jq -r '.product' "$D/manifest.json")" = "jaaOS" ] && ok "manifest product" || no "manifest product"
 	[ "$(jq '.artifacts | length' "$D/manifest.json")" -eq 2 ] && ok "manifest lists 2 artifacts" || no "manifest lists 2 artifacts"
 else
-	grep -q BastionOS "$D/manifest.json" && ok "manifest has product (no jq)" || no "manifest has product (no jq)"
+	grep -q jaaOS "$D/manifest.json" && ok "manifest has product (no jq)" || no "manifest has product (no jq)"
 fi
 
 echo "== SBOM =="

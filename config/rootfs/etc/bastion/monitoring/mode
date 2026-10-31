@@ -1,6 +1,0 @@
-# BastionOS monitoring mode. Read by `bastion-health`.
-#   lite  — node_exporter + a short-retention Prometheus only. For workstations and small VMs.
-#           (CPU/mem/disk/load, failed units, security textfile metrics, local alert rules.)
-#   full  — lite + Alertmanager + Loki + Alloy + Grafana + Falco. For servers.
-# `bastion-health enable --mode <lite|full>` rewrites this line and toggles the unit set.
-MODE=lite

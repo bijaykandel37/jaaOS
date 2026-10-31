@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BastionOS Phase 2 FUNCTIONAL test for the luks2 provider.
+# jaaOS Phase 2 FUNCTIONAL test for the luks2 provider.
 #
 # RUN ONLY IN A DISPOSABLE ROOT VM — it creates real LUKS2 containers (loopback-backed
 # files) and a throwaway user. It exercises the provider the PAM helper relies on:
@@ -10,21 +10,21 @@ set -uo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "root only" >&2; exit 1; }
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-PROV="$REPO/packages/bastion-env/providers/luks2"
-TESTUSER=bastion-test
+PROV="$REPO/packages/jaa-env/providers/luks2"
+TESTUSER=jaa-test
 TMPROOT="$(mktemp -d)"
-export BASTION_USER="$TESTUSER"
-export BASTION_STORE="$TMPROOT/store"
-export BASTION_HOME="$TMPROOT/home"
-export BASTION_ENV_SIZE=256M
-mkdir -p "$BASTION_HOME"
+export JAA_USER="$TESTUSER"
+export JAA_STORE="$TMPROOT/store"
+export JAA_HOME="$TMPROOT/home"
+export JAA_ENV_SIZE=256M
+mkdir -p "$JAA_HOME"
 id "$TESTUSER" >/dev/null 2>&1 || useradd -M "$TESTUSER"
 
 cleanup() {
-	for m in $(ls /dev/mapper/ | grep -E '^bastion_(home|fmt)_' 2>/dev/null); do
+	for m in $(ls /dev/mapper/ | grep -E '^jaa_(home|fmt)_' 2>/dev/null); do
 		cryptsetup close "$m" 2>/dev/null || true
 	done
-	mountpoint -q "$BASTION_HOME" && umount "$BASTION_HOME" 2>/dev/null || true
+	mountpoint -q "$JAA_HOME" && umount "$JAA_HOME" 2>/dev/null || true
 	rm -rf "$TMPROOT"
 }
 trap cleanup EXIT
@@ -49,13 +49,13 @@ echo "== wrong password is rejected =="
 if printf '%s' "$PBAD" | "$PROV" try-unlock >/dev/null 2>&1; then no "bad pw rejected"; else ok "bad pw rejected"; fi
 
 echo "== re-auth (verify-active) only matches its own environment =="
-if printf '%s' "$PA" | "$PROV" verify-active "$BASTION_STORE/env.0"; then ok "pwA verifies against env.0"; else no "pwA verifies against env.0"; fi
-if printf '%s' "$PB" | "$PROV" verify-active "$BASTION_STORE/env.0" >/dev/null 2>&1; then no "pwB must NOT verify against env.0"; else ok "pwB rejected on env.0 (no hint env.1 exists)"; fi
+if printf '%s' "$PA" | "$PROV" verify-active "$JAA_STORE/env.0"; then ok "pwA verifies against env.0"; else no "pwA verifies against env.0"; fi
+if printf '%s' "$PB" | "$PROV" verify-active "$JAA_STORE/env.0" >/dev/null 2>&1; then no "pwB must NOT verify against env.0"; else ok "pwB rejected on env.0 (no hint env.1 exists)"; fi
 
 echo "== mount / unmount round-trip =="
 OA="$(printf '%s' "$PA" | "$PROV" try-unlock || true)"; set -- $OA
-if [ -n "${2:-}" ] && "$PROV" mount "$2" && mountpoint -q "$BASTION_HOME"; then ok "mount env.0 at home"; else no "mount env.0 at home"; fi
-if "$PROV" unmount "${2:-none}" && ! mountpoint -q "$BASTION_HOME"; then ok "unmount + close"; else no "unmount + close"; fi
+if [ -n "${2:-}" ] && "$PROV" mount "$2" && mountpoint -q "$JAA_HOME"; then ok "mount env.0 at home"; else no "mount env.0 at home"; fi
+if "$PROV" unmount "${2:-none}" && ! mountpoint -q "$JAA_HOME"; then ok "unmount + close"; else no "unmount + close"; fi
 
 echo "== timing: A / B / neither should be close (both KDFs always run) =="
 timeit() { local p="$1" s e o; s="$(date +%s.%N)"; o="$(printf '%s' "$p" | "$PROV" try-unlock 2>/dev/null || true)"; e="$(date +%s.%N)"; close_from "$o"; awk -v a="$s" -v b="$e" 'BEGIN{printf "%.3f", b-a}'; }

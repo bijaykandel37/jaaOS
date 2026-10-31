@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate the BastionOS Secure Boot key set (PK / KEK / db) used to sign the UKI and
+# Generate the jaaOS Secure Boot key set (PK / KEK / db) used to sign the UKI and
 # systemd-boot. Idempotent: if keys already exist it does nothing. Keys live under
 # build/secureboot/keys which is .gitignored — never commit private keys.
 set -euo pipefail
@@ -19,7 +19,7 @@ echo "$GUID" > guid
 
 gen() { # <name> <common-name>
 	openssl req -new -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
-		-subj "/CN=BastionOS $2/" -keyout "$1.key" -out "$1.crt"
+		-subj "/CN=jaaOS $2/" -keyout "$1.key" -out "$1.crt"
 	openssl x509 -in "$1.crt" -outform DER -out "$1.der"
 }
 

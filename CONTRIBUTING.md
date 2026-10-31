@@ -1,7 +1,7 @@
-# Contributing to BastionOS
+# Contributing to jaaOS
 
 Start with [`CLAUDE.md`](CLAUDE.md) (the fastest orientation) and the design docs in
-[`docs/`](docs/). BastionOS is a **Debian 13 derivative** built as a thin overlay, developed in
+[`docs/`](docs/). jaaOS is a **Debian 13 derivative** built as a thin overlay, developed in
 reviewable **phases** — each phase's goals, acceptance criteria, and known limitations live in
 its `docs/0N-*.md`.
 
@@ -36,6 +36,6 @@ environment-enumerating command.
 
 ## Scope
 
-BastionOS and its VAPT tooling are for **authorized** security work only. Contributions that are
+jaaOS and its VAPT tooling are for **authorized** security work only. Contributions that are
 primarily aimed at attacking third parties, evading detection for malicious use, or similar are
 out of scope.

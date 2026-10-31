@@ -1,7 +1,7 @@
-# BastionOS — prometheus-node-exporter options (Phase 5).
+# jaaOS — prometheus-node-exporter options (Phase 5).
 # Bind to localhost only (scrape via SSH tunnel; the firewall does not open 9100).
 # Enable the systemd collector (feeds the "failed units" alert/dashboard) and the textfile
-# collector (carries BastionOS security metrics written by bastion-security-metrics).
+# collector (carries jaaOS security metrics written by jaa-security-metrics).
 ARGS="--web.listen-address=127.0.0.1:9100 \
 --collector.systemd \
 --collector.textfile.directory=/var/lib/prometheus/node-exporter \

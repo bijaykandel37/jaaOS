@@ -1,4 +1,4 @@
-# BastionOS — Architecture (Phase 0)
+# jaaOS — Architecture (Phase 0)
 
 Status: **accepted for Phase 1**. Audience: the maintainer and any future contributor.
 This document fixes the base, the component layering, and the decisions that are expensive to
@@ -14,10 +14,10 @@ team tracking CVEs, own kernel builds per CVE) is not sustainable solo — the p
 failure mode is a system that falls behind on security updates, which is *worse* than a stock
 distro. Therefore:
 
-> **BastionOS is a Debian 13 (trixie) stable derivative delivered as a thin overlay**, not a
+> **jaaOS is a Debian 13 (trixie) stable derivative delivered as a thin overlay**, not a
 > new distribution. We inherit Debian's package archive, security team, signed kernel, and
 > reproducibility infrastructure. We own only: an installer preset, a signed overlay repo of
-> `bastion-*` packages, config packages, and hardening defaults.
+> `jaa-*` packages, config packages, and hardening defaults.
 
 Every decision below is checked against "can one person keep this patched?"
 
@@ -72,10 +72,10 @@ images (most exist; a few tools are x86-only — documented gaps). Not in scope 
  │ PROFILES (APT meta-packages, every component a toggle)                    │
  │   minimal · server(+web/lb/monitoring) · desktop(GNOME) · security-lab    │
  ├─────────────────────────────────────────────────────────────────────────┤
- │ BASTION TOOLING (bastion-* debs in signed overlay repo)                   │
- │   bastion (system.toml: diff/apply) · bastion-env (dual-home)             │
- │   bastion-host (sites/LB) · bastion-scan (VAPT) · bastion-health          │
- │   bastion-audit (Lynis/CIS)                                               │
+ │ JAA TOOLING (jaa-* debs in signed overlay repo)                   │
+ │   jaa (system.toml: diff/apply) · jaa-env (dual-home)             │
+ │   jaa-host (sites/LB) · jaa-scan (VAPT) · jaa-health          │
+ │   jaa-audit (Lynis/CIS)                                               │
  ├───────────────────────────────┬───────────────────────────────────────────┤
  │ CONTAINERIZED WORKLOADS        │ MONITORING STACK (local, containerized)   │
  │   VAPT tools (netns-isolated,  │   Prometheus · node_exporter · Loki ·     │
@@ -83,7 +83,7 @@ images (most exist; a few tools are x86-only — documented gaps). Not in scope 
  │   rootless default · k3s opt   │                                           │
  ├───────────────────────────────┴───────────────────────────────────────────┤
  │ AUTH / POLICY                                                             │
- │   PAM (pam_bastion_env: tries pw → mounts matching home) · polkit ·       │
+ │   PAM (pam_jaa_env: tries pw → mounts matching home) · polkit ·       │
  │   AppArmor (enforcing, profiles per shipped service) · sudo/su            │
  ├─────────────────────────────────────────────────────────────────────────┤
  │ SYSTEM SERVICES                                                           │
@@ -158,7 +158,7 @@ Other storage rules:
 We ship **Debian's signed stock kernel** and harden it at runtime + boot, rather than building a
 `linux-hardened` equivalent. Rebuilding the kernel per-CVE solo is the fastest route to running an
 *out-of-date* kernel; inheriting Debian's kernel security team is strictly safer in practice. An
-opt-in custom-config `bastion-hardened-kernel` may come in a later phase, never in v1.
+opt-in custom-config `jaa-hardened-kernel` may come in a later phase, never in v1.
 
 KSPP-aligned defaults, with workload-breaking options justified:
 
@@ -182,7 +182,7 @@ Hardened **sysctl** (kptr_restrict, dmesg_restrict, `kernel.yama.ptrace_scope=2`
 services are far easier to write and maintain solo than SELinux policy), path-based profiles are
 tractable for one person, and GNOME/GDM integrate with it cleanly. SELinux offers finer type
 enforcement but a maintenance cost a solo project can't carry. Every **shipped service** (nginx,
-Caddy, HAProxy, Traefik, the `bastion-*` daemons, monitoring exporters) ships an enforcing
+Caddy, HAProxy, Traefik, the `jaa-*` daemons, monitoring exporters) ships an enforcing
 profile; third-party workloads default to the generic container confinement (Podman + its
 AppArmor/seccomp defaults).
 
@@ -191,15 +191,15 @@ AppArmor/seccomp defaults).
 ## 7. Profiles (meta-packages; every component a toggle)
 
 Each profile is an APT meta-package depending on component meta-packages. The installer presents
-components as toggles; `bastion install <component>` adds one later; `system.toml` makes the set
+components as toggles; `jaa install <component>` adds one later; `system.toml` makes the set
 declarative.
 
 | Profile | Contents | Target idle RAM¹ | Target disk¹ |
 |---|---|---|---|
 | **Minimal** | base + SSH (key-only) + nftables + CLI tools + auditd + CrowdSec; no GUI | ~400–600 MB | ~3–4 GB |
-| **Server** | Minimal + `bastion-host` (nginx/Caddy/HAProxy/Traefik/keepalived) + Podman + monitoring | ~0.8–1.2 GB | ~6–8 GB |
+| **Server** | Minimal + `jaa-host` (nginx/Caddy/HAProxy/Traefik/keepalived) + Podman + monitoring | ~0.8–1.2 GB | ~6–8 GB |
 | **Desktop** | Minimal + **GNOME** (Wayland) + Flatpak/bubblewrap + optional server tooling | ~1.5–2 GB | ~12–15 GB |
-| **Security Lab** | Desktop + containerized VAPT toolkit (`bastion-scan`) | ~2–2.5 GB | ~20–30 GB (images) |
+| **Security Lab** | Desktop + containerized VAPT toolkit (`jaa-scan`) | ~2–2.5 GB | ~20–30 GB (images) |
 
 ¹ Estimates to be *verified* by Phase 1/3 acceptance tests, not promises.
 
@@ -217,7 +217,7 @@ dual-env PAM module (lock-screen consistency is a hard requirement). KDE is more
    Debian (inherit the hard part), containerized tools, minimal custom code, heavy CI automation.
 2. **Deniability over-promise = user-safety risk.** The marquee feature can give users false
    confidence that gets them hurt under coercion/forensics. *Mitigation:* ship the honest threat
-   model on-device; `bastion-env status` reveals nothing; never market "undetectable."
+   model on-device; `jaa-env status` reveals nothing; never market "undetectable."
 3. **Deniable-storage maturity.** Shufflecake is beta; beta code in the storage/boot path risks
    data loss. *Mitigation:* extensive VM + forensic test suite (Phase 2), per-environment backups,
    a LUKS2-detached-header fallback design.
@@ -229,7 +229,7 @@ dual-env PAM module (lock-screen consistency is a hard requirement). KDE is more
    shared `/` can read the other environment once unlocked. *Architectural limit*, documented;
    partial mitigation via AIDE/auditd/AppArmor/rootless containers.
 7. **Installer complexity for deniable FDE.** Stock Calamares can't partition deniable volumes; a
-   custom module or a `bastion-env init` post-install flow is required. *Scheduled realistically
+   custom module or a `jaa-env init` post-install flow is required. *Scheduled realistically
    in Phase 2/3.*
 8. **Supply chain of fast-moving tools.** Pinned binaries/images rot or disappear. *Mitigation:*
    pin by digest, mirror images into the overlay, record provenance.

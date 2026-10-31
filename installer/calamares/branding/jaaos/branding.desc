@@ -1,0 +1,28 @@
+---
+componentName: jaaos
+
+welcomeStyleCalamares: true
+windowExpanding: normal
+
+strings:
+    productName:         jaaOS
+    shortProductName:    jaaOS
+    version:             0.1
+    shortVersion:        0.1
+    versionedName:       jaaOS 0.1
+    shortVersionedName:  jaaOS 0.1
+    bootloaderEntryName: jaaOS
+    productUrl:          "https://github.com/"
+    supportUrl:          "https://github.com/"
+    releaseNotesUrl:     "https://github.com/"
+
+images:
+    productLogo:  "logo.png"
+    productIcon:  "logo.png"
+    productWelcome: ""
+
+style:
+    sidebarBackground:    "#141414"
+    sidebarText:          "#ffffff"
+    sidebarTextSelect:    "#2b7de9"
+    sidebarTextHighlight: "#2b7de9"

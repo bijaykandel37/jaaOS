@@ -1,0 +1,16 @@
+[package]
+name = "jaa-scan"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Authorized-testing-only VAPT orchestrator (scope-enforced, audited)"
+
+[[bin]]
+name = "jaa-scan"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+jaa-core = { path = "../jaa-core" }

@@ -1,0 +1,3 @@
+// jaaOS: take a Btrfs/snapper snapshot of / before any apt package change,
+// so a bad upgrade can be rolled back. No-op if snapper is not yet configured.
+DPkg::Pre-Invoke { "/usr/local/sbin/jaa-apt-snapshot || true"; };

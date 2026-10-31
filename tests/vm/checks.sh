@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BastionOS Phase 1 acceptance checks. Copy into the running VM and run as root:
+# jaaOS Phase 1 acceptance checks. Copy into the running VM and run as root:
 #   sudo bash checks.sh
 # Exits non-zero if any check fails.
 set -u
@@ -11,7 +11,7 @@ chk() { # <description> <command...>
 }
 grepq() { grep -q "$@"; }
 
-echo "== BastionOS Phase 1 checks =="
+echo "== jaaOS Phase 1 checks =="
 
 # Kernel hardening
 chk "lockdown = confidentiality" sh -c 'grep -q "\[confidentiality\]" /sys/kernel/security/lockdown'
@@ -28,7 +28,7 @@ chk "AppArmor profiles loaded"   sh -c 'aa-status --enabled && [ "$(aa-status --
 
 # Storage / crypto
 chk "root is Btrfs"              sh -c '[ "$(findmnt -no FSTYPE /)" = "btrfs" ]'
-chk "root is on LUKS2"           sh -c 'cryptsetup status bastion_root | grep -qi "type:.*LUKS2"'
+chk "root is on LUKS2"           sh -c 'cryptsetup status jaa_root | grep -qi "type:.*LUKS2"'
 chk "LUKS uses argon2id"         sh -c 'cryptsetup luksDump "$(findmnt -no SOURCE / | sed "s#/dev/mapper/##;s#^#/dev/disk/by-uuid/#" 2>/dev/null; true)" 2>/dev/null | grep -qi argon2id || cryptsetup luksDump "$(blkid -t TYPE=crypto_LUKS -o device | head -n1)" | grep -qi argon2id'
 chk "/tmp is tmpfs"              sh -c '[ "$(findmnt -no FSTYPE /tmp)" = "tmpfs" ]'
 chk "/var/tmp is tmpfs"          sh -c '[ "$(findmnt -no FSTYPE /var/tmp)" = "tmpfs" ]'
@@ -36,7 +36,7 @@ chk "swap is zram (no disk swap)" sh -c 'swapon --show=NAME --noheadings | grep 
 
 # Boot integrity
 chk "booted via EFI"             sh -c '[ -d /sys/firmware/efi ]'
-chk "booted a UKI (stub)"        sh -c 'bootctl status 2>/dev/null | grep -qi "bastionos-"'
+chk "booted a UKI (stub)"        sh -c 'bootctl status 2>/dev/null | grep -qi "jaaos-"'
 # Secure Boot: only meaningful if enrolled in the VM firmware; informational if not.
 if [ -d /sys/firmware/efi ]; then
 	if mokutil --sb-state 2>/dev/null | grep -qi enabled || bootctl status 2>/dev/null | grep -qi "Secure Boot: enabled"; then

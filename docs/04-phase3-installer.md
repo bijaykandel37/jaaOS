@@ -1,4 +1,4 @@
-# BastionOS — Phase 3: Installer with profiles
+# jaaOS — Phase 3: Installer with profiles
 
 Status: **written and syntax-checked; not yet run** (a real install needs a live/dev environment
 and a target disk in a VM — see Test plan). The installer reuses the Phase 1 image logic against
@@ -7,21 +7,21 @@ dual-env/PAM.
 
 ## Goal
 
-Install BastionOS onto a target disk — interactively (TUI, server-friendly) or via Calamares
+Install jaaOS onto a target disk — interactively (TUI, server-friendly) or via Calamares
 (graphical) — with a chosen profile, hardened FDE, Secure Boot (signed UKI), Btrfs+snapper, a
 user, and (optionally) the dual-password home. Every profile component is a toggle and can be
-added later with one command (`bastion install <component>`).
+added later with one command (`jaa install <component>`).
 
 ## Key decision: the installer creates ONLY the declarable environment
 
 When dual-env is enabled, the installer sets up the system + **one** home environment (the
-decoy / primary) whose password is the user's login password, writes `/etc/bastion-env/config`,
+decoy / primary) whose password is the user's login password, writes `/etc/jaa-env/config`,
 and wires PAM. It does **not** create any hidden environment. Hidden environments are added
-afterwards with `bastion-env add`, run by the user when unobserved.
+afterwards with `jaa-env add`, run by the user when unobserved.
 
 Why: creating a hidden environment *at install time* would leave exactly the evidence the feature
 is meant to avoid — installer logs, the observable act of entering a second password, answer
-files, timestamps. A fresh BastionOS install is therefore **indistinguishable** from one that
+files, timestamps. A fresh jaaOS install is therefore **indistinguishable** from one that
 will only ever have one environment, which is the strongest honest posture. (It also keeps the
 installer simple and avoids putting a second KDF/volume setup in a disk-writing tool.) This is a
 deliberate trade of convenience for deniability; documented, not hidden.
@@ -32,7 +32,7 @@ Two unlock steps exist by design when dual-env is on:
 
 1. **Boot FDE** — the main LUKS2 volume (system: `/`, `/var`, …) unlocks at boot via TPM2+PIN or
    passphrase. Same as Phase 1.
-2. **Login** — `/home/<user>` is a **separate** bastion-env container unlocked by the *login
+2. **Login** — `/home/<user>` is a **separate** jaa-env container unlocked by the *login
    password* via PAM (Phase 2), **not** the main volume's `@home` subvolume.
 
 So the main volume holds the system; the home is its own encrypted container the PAM layer
@@ -41,7 +41,7 @@ behaviour) and there is only the boot unlock.
 
 ## Graphical vs TUI — and why no custom Calamares C++ module
 
-- **TUI installer** (`installer/tui/bastion-install`): the primary, fully-controlled path, ideal
+- **TUI installer** (`installer/tui/jaa-install`): the primary, fully-controlled path, ideal
   for servers and for the deniable-FDE flow. Shell, because it is orchestration driving
   `sgdisk`/`cryptsetup`/`mmdebstrap`/`ukify` (consistent with ADR 0002 — rewriting it in Rust
   would add code, not speed). Supports an **unattended** answer file for CI.
@@ -64,23 +64,23 @@ profile's extras:
 | Desktop | `desktop.packages` | GNOME (Wayland) + Flatpak. |
 | Security Lab | `security-lab.packages` | Desktop + container runtime; the VAPT tools are containerized in Phase 6, not host packages. |
 
-These become real APT meta-packages (`bastionos-profile-*`) once the overlay repo is built
+These become real APT meta-packages (`jaaos-profile-*`) once the overlay repo is built
 (Phase 7); until then the installer consumes the lists directly.
 
 ## Files in this phase
 
 | File | Purpose |
 |---|---|
-| `installer/tui/bastion-install` | Interactive + unattended TUI installer (the main deliverable). |
+| `installer/tui/jaa-install` | Interactive + unattended TUI installer (the main deliverable). |
 | `installer/answers.example.conf` | Example unattended answer file. |
 | `installer/calamares/settings.conf` | Calamares module sequence. |
 | `installer/calamares/modules/packagechooser.conf` | Profile selection in the GUI. |
-| `installer/calamares/modules/shellprocess-bastion.conf` | Post-install hook: profile packages + dual-env setup. |
-| `installer/calamares/branding/bastionos/branding.desc` | Minimal branding. |
+| `installer/calamares/modules/shellprocess-jaa.conf` | Post-install hook: profile packages + dual-env setup. |
+| `installer/calamares/branding/jaaos/branding.desc` | Minimal branding. |
 | `build/profiles/server.packages` | Server profile extras. |
 | `build/profiles/desktop.packages` | Desktop profile extras. |
 | `build/profiles/security-lab.packages` | Security Lab profile extras. |
-| `packages/bastion/bin/bastion` | `bastion install <component>` (+ `diff`/`apply` stubs for the Phase-7 declarative config). |
+| `packages/jaa/bin/jaa` | `jaa install <component>` (+ `diff`/`apply` stubs for the Phase-7 declarative config). |
 | `tests/vm/install-test.sh` | Unattended-install harness against a scratch disk in QEMU. |
 
 ## Build / test (copy-paste)
@@ -88,7 +88,7 @@ These become real APT meta-packages (`bastionos-profile-*`) once the overlay rep
 ```bash
 cd /home/bijay/Public/jaaOS
 # Syntax check
-bash -n installer/tui/bastion-install packages/bastion/bin/bastion tests/vm/install-test.sh
+bash -n installer/tui/jaa-install packages/jaa/bin/jaa tests/vm/install-test.sh
 
 # End-to-end install test (needs a Debian/dev host with qemu + the Phase 1 tools):
 #  1. Build the Phase 1 image (make image) to use as a live/dev environment, OR run the
@@ -101,20 +101,20 @@ bash tests/vm/install-test.sh
 Interactive run (inside a live/dev VM, as root), against e.g. /dev/vdb:
 
 ```bash
-sudo installer/tui/bastion-install
+sudo installer/tui/jaa-install
 # or unattended:
-sudo installer/tui/bastion-install --unattended installer/answers.example.conf
+sudo installer/tui/jaa-install --unattended installer/answers.example.conf
 ```
 
 ## Acceptance criteria
 
 - [ ] Unattended install onto a blank VM disk completes without error and the result boots to a
       login (reusing `tests/vm/run-qemu.sh` against the installed disk).
-- [ ] Profile selection installs the expected package set; `bastion install <component>` adds a
+- [ ] Profile selection installs the expected package set; `jaa install <component>` adds a
       component afterwards.
-- [ ] With dual-env enabled, the login password unlocks `/home/<user>`, `/etc/bastion-env/config`
+- [ ] With dual-env enabled, the login password unlocks `/home/<user>`, `/etc/jaa-env/config`
       has `MANAGED_USER` set, and PAM is wired; **no** hidden environment exists until
-      `bastion-env add` is run.
+      `jaa-env add` is run.
 - [ ] TPM2+PIN enrollment (when chosen) unlocks the boot volume on next boot; a wrong PIN falls
       back to the passphrase.
 - [ ] The installer refuses to proceed without an explicit, typed disk-wipe confirmation.
