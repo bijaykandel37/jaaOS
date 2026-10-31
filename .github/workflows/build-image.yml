@@ -1,0 +1,54 @@
+name: Build image
+
+# Reproducible rootfs + encrypted, signed disk image. Manual trigger: the image step needs root
+# (loop devices, cryptsetup, mounts). GitHub-hosted runners DO give root, so this works — but
+# they have no nested KVM, so the resulting image is NOT boot-tested here. Boot-test on a real
+# host with `make vm` (OVMF + swtpm). See docs/08-phase7-release.md.
+on:
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: "snapshot.debian.org timestamp (reproducibility pin)"
+        default: "20261001T000000Z"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mmdebstrap uidmap gdisk cryptsetup-bin btrfs-progs \
+            dosfstools sbsigntool efitools openssl uuid-runtime
+
+      - name: Secure Boot keys (ephemeral, CI-only)
+        run: make keys
+
+      - name: Reproducible rootfs
+        env:
+          SNAPSHOT: ${{ inputs.snapshot }}
+        run: make rootfs
+
+      - name: Disk image (root)
+        env:
+          LUKS_PASSPHRASE: ci-build-not-secret
+        run: sudo --preserve-env=LUKS_PASSPHRASE make image
+
+      - name: Checksums + manifest (unsigned in CI)
+        run: bash build/release.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bastionos-image
+          path: |
+            out/bastionos-minimal.img
+            out/dist/
+          retention-days: 7
+          if-no-files-found: error

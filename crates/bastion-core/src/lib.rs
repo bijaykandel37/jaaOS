@@ -7,6 +7,8 @@ use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::process::Command;
 
+pub mod scope;
+
 /// Run a command and return its trimmed stdout, erroring on a non-zero exit.
 pub fn capture(cmd: &str, args: &[&str]) -> Result<String> {
     let out = Command::new(cmd)

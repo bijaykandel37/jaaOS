@@ -13,9 +13,11 @@ This structure is a deliberate consequence of the project being maintained by **
 
 ## Status
 
-Phases 0–2 are written as **code + docs, syntax-checked only** — nothing has been built or
-booted yet (that needs a Debian host and a root VM). New here? Read [`CLAUDE.md`](CLAUDE.md) for a
-fast orientation and the [`docs/`](docs/README.md) index for the design.
+All seven phases are written. Phases 1–3 are **code, syntax-checked** (not yet built/booted — that
+needs a Debian host and a root VM). Phases 4–7 add **sandboxed test suites that pass on real runs**
+(no root, no VM): `make test` runs all six (hosting, monitoring, vapt, update, release, system-toml).
+The image build, live ISO, and the GitHub workflows still need a run on real infrastructure. New
+here? Read [`CLAUDE.md`](CLAUDE.md) for a fast orientation and the [`docs/`](docs/README.md) index.
 
 | Phase | Scope | State |
 |------:|-------|-------|
@@ -26,7 +28,7 @@ fast orientation and the [`docs/`](docs/README.md) index for the design.
 | 4 | Hosting & load-balancing CLI (`bastion-host`) | ✅ code + tests pass |
 | 5 | Self-monitoring stack (Prometheus/Loki/Grafana/Falco + `bastion-health`) | ✅ code + tests pass |
 | 6 | VAPT toolkit (containerized, scope-enforced `bastion-scan`) | ✅ code + tests pass |
-| 7 | Desktop polish, docs, CI builds, release signing | ⬜ pending |
+| 7 | CI, release signing, update/rollback, declarative config, first Rust port | ✅ code + tests pass (live ISO / Cockpit scaffolded) |
 
 ## Quick start (Debian/Ubuntu host)
 
@@ -93,7 +95,8 @@ lives in the matching `docs/0N-*.md`.
 4. ✅ **Hosting / load balancing** — `bastion-host`.
 5. ✅ **Monitoring** — local Prometheus/Loki/Grafana/Falco stack + `bastion-health`.
 6. ✅ **VAPT toolkit** — containerized, scope-enforced, audited `bastion-scan` (assessment only).
-7. ⬜ **Desktop polish, docs, CI builds, release signing, update/rollback pipeline.**
+7. ✅ **Polish/release** — CI (lint/test/rust), signed reproducible releases, `bastion-update`
+   (snapshot rollback), declarative `bastion diff`/`apply`, first Rust port; live ISO + Cockpit scaffolded.
 
 ## License
 

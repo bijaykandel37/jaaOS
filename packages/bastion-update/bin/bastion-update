@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# bastion-update — update/rollback wrapped in Btrfs+snapper snapshots (prototype / spec).
+# Rust port target: crates/bastion-update (ADR 0002).
+#
+# Every `apply` is bracketed by a snapper pre/post snapshot of the root subvolume (Phase 1 sets
+# up the snapper `root` config), so a bad upgrade is one `bastion-update rollback` away.
+#
+# HONEST LIMIT: the kernel ships inside the immutable, Secure-Boot-signed UKI (Phase 1). A
+# snapper rollback restores the root FS, but NOT the booted kernel/UKI — that lives on the ESP
+# and is replaced only by rebuilding+re-signing the image. So a kernel-level regression needs the
+# previous signed image, not just a subvolume rollback. bastion-update detects and warns when an
+# upgrade touched the kernel/initramfs. See docs/08-phase7-release.md.
+#
+# BASTION_UPDATE_DRYRUN=1 prints the ordered plan and runs nothing (what the test uses).
+set -euo pipefail
+
+DRYRUN="${BASTION_UPDATE_DRYRUN:-0}"
+SNAPPER_CONF="${BASTION_UPDATE_SNAPPER_CONF:-root}"
+
+die()  { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARN: $*" >&2; }
+have() { command -v "$1" >/dev/null 2>&1; }
+need_root() { [ "$DRYRUN" = 1 ] || [ "$(id -u)" -eq 0 ] || die "run with sudo"; }
+need_snapper() { [ "$DRYRUN" = 1 ] || have snapper || die "snapper not installed"; }
+run() { if [ "$DRYRUN" = 1 ]; then echo "+ $*"; else eval "$*"; fi; }
+
+cmd_status() {
+	echo "BastionOS update status"
+	if have btrfs; then
+		echo "  default subvol : $(btrfs subvolume get-default / 2>/dev/null | awk '{print $NF}' || echo '?')"
+	fi
+	if [ -r /var/log/apt/history.log ]; then
+		echo "  last apt action: $(grep -a '^Start-Date:' /var/log/apt/history.log 2>/dev/null | tail -1 | cut -d' ' -f2-)"
+	else
+		echo "  last apt action: unknown"
+	fi
+	if have snapper; then
+		echo "  snapshots      : $(snapper -c "$SNAPPER_CONF" list 2>/dev/null | tail -n +4 | wc -l | tr -d ' ')"
+	else
+		echo "  snapshots      : snapper not available"
+	fi
+}
+
+cmd_check() {
+	need_root
+	echo "Checking for updates (Debian base + BastionOS overlay)…"
+	run "apt-get update -qq"
+	if [ "$DRYRUN" = 1 ]; then
+		echo "+ apt list --upgradable"
+	else
+		apt list --upgradable 2>/dev/null | grep -v '^Listing' || echo "  system is up to date"
+	fi
+}
+
+cmd_apply() {
+	need_root
+	echo "Applying updates inside a snapshot bracket:"
+	echo "[plan] 1. snapper create PRE-snapshot ($SNAPPER_CONF)"
+	echo "[plan] 2. apt-get update && apt-get -y full-upgrade"
+	echo "[plan] 3. snapper create POST-snapshot ($SNAPPER_CONF)"
+	echo "[plan] 4. detect kernel/initramfs change -> warn if the signed UKI must be rebuilt"
+	if [ "$DRYRUN" = 1 ]; then
+		echo "(dry-run: nothing executed)"
+		return 0
+	fi
+	have snapper || die "snapper not installed — refusing to upgrade without a rollback point"
+	local pre
+	pre="$(snapper -c "$SNAPPER_CONF" create -t pre -p -d 'bastion-update pre')" || die "pre-snapshot failed"
+	# Record what the kernel looks like before, to detect a kernel-touching upgrade.
+	local kbefore; kbefore="$(dpkg-query -W -f='${Version}\n' "linux-image-$(uname -r)" 2>/dev/null || true)"
+	apt-get update -qq
+	apt-get -y full-upgrade
+	snapper -c "$SNAPPER_CONF" create -t post --pre-number "$pre" -d 'bastion-update post' || warn "post-snapshot failed"
+	local kafter; kafter="$(dpkg-query -W -f='${Version}\n' "linux-image-$(uname -r)" 2>/dev/null || true)"
+	if [ -n "$kafter" ] && [ "$kbefore" != "$kafter" ]; then
+		warn "kernel changed ($kbefore -> $kafter). The running UKI is signed+immutable; rebuild and"
+		warn "re-sign the image (make image) and re-enroll, or the new kernel will not boot under Secure Boot."
+	fi
+	echo "Done. Roll back with: bastion-update rollback"
+}
+
+cmd_rollback() {
+	need_root
+	local target="${1:-}"
+	need_snapper
+	if [ -z "$target" ]; then
+		echo "Latest snapshots (pick a number to roll back to):"
+		run "snapper -c '$SNAPPER_CONF' list | tail -n 6"
+		echo "Usage: bastion-update rollback <snapshot-number>"
+		return 0
+	fi
+	echo "Rolling back root to snapshot $target (a new RW snapshot becomes default; reboot after)."
+	run "snapper -c '$SNAPPER_CONF' rollback '$target'"
+	warn "Kernel/UKI is NOT rolled back by this (see the header note). Reboot to apply."
+}
+
+cmd_list() { need_snapper; run "snapper -c '$SNAPPER_CONF' list"; }
+
+usage() {
+	cat <<'EOF'
+bastion-update — snapshot-bracketed system updates
+  status              current subvol, last apt action, snapshot count
+  check               refresh indexes and list upgradable packages
+  apply               pre-snapshot -> full-upgrade -> post-snapshot (warns on kernel change)
+  rollback [number]   roll the root subvol back to a snapshot (reboot to apply)
+  list                list snapper snapshots
+Set BASTION_UPDATE_DRYRUN=1 to print the plan without executing.
+EOF
+}
+
+cmd="${1:-status}"; shift || true
+case "$cmd" in
+	status)   cmd_status "$@";;
+	check)    cmd_check "$@";;
+	apply)    cmd_apply "$@";;
+	rollback) cmd_rollback "$@";;
+	list)     cmd_list "$@";;
+	help|-h|--help) usage;;
+	*) echo "unknown command: $cmd (try 'bastion-update help')" >&2; exit 2;;
+esac

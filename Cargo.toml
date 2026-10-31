@@ -8,6 +8,7 @@ members = [
     "crates/bastion-host",
     "crates/bastion-health",
     "crates/bastion-scan",
+    "crates/bastion-update",
     "crates/pam-bastion-env",
 ]
 

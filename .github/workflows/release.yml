@@ -1,0 +1,48 @@
+name: Release
+
+# On a version tag (vX.Y.Z): build the image, produce checksums + a provenance manifest + an
+# SBOM, sign them, and publish a GitHub release. Signing uses a minisign secret key stored as the
+# MINISIGN_SECRET_KEY repo secret (+ MINISIGN_KEY_PASSWORD). Without it, artifacts are published
+# UNSIGNED and the job says so — it does not fail (so you can cut an unsigned pre-release).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # create the GitHub release
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mmdebstrap uidmap gdisk cryptsetup-bin btrfs-progs \
+            dosfstools sbsigntool efitools openssl uuid-runtime minisign
+
+      - name: Secure Boot keys
+        run: make keys
+
+      - name: Reproducible rootfs
+        run: make rootfs
+
+      - name: Disk image
+        env:
+          LUKS_PASSPHRASE: change-me-on-first-boot
+        run: sudo --preserve-env=LUKS_PASSPHRASE make image
+
+      - name: Checksums, manifest, SBOM, signatures
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_KEY_PASSWORD: ${{ secrets.MINISIGN_KEY_PASSWORD }}
+        run: bash build/release.sh
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

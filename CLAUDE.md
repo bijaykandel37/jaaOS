@@ -42,17 +42,18 @@ exactly where a C memory bug would be an auth bypass. Therefore:
 
 ## Repo map
 - `docs/` — `00` architecture, `01` threat model, `02` phase-1 image, `03` phase-2 dual-env, `decisions/` ADRs. **Read before changing design; update when you change behaviour.**
-- `crates/` — Rust workspace: `bastion-core` (shared), `bastion-env` + `bastion-host` + `bastion-health` + `bastion-scan` (CLIs, port in progress), `pam-bastion-env` (cdylib scaffold). The real product tooling lands here. Bash specs live in `packages/*/bin/`.
-- `build/` — `build.sh` (orchestrator) → `secureboot.sh` (SB keys) + `mkrootfs.sh` (reproducible Debian rootfs) + `mkimage.sh` (LUKS2+Btrfs+signed-UKI image). `profiles/*.packages`, `hooks/`.
+- `crates/` — Rust workspace: `bastion-core` (shared; `scope` = first real port, IPv4/scope logic with unit tests), `bastion-env` + `bastion-host` + `bastion-health` + `bastion-scan` + `bastion-update` (CLIs, port in progress), `pam-bastion-env` (cdylib scaffold). The real product tooling lands here. Bash specs live in `packages/*/bin/`.
+- `build/` — `build.sh` (orchestrator) → `secureboot.sh` (SB keys) + `mkrootfs.sh` (reproducible Debian rootfs) + `mkimage.sh` (LUKS2+Btrfs+signed-UKI image); `release.sh` (checksums/manifest/SBOM/signature), `mklive.sh` (live-ISO scaffold). `profiles/*.packages`, `hooks/`.
+- `.github/workflows/` — CI (lint + sandbox tests + rust), `build-image.yml`, `release.yml` (Phase 7).
 - `kernel/` — `cmdline` (baked into the UKI; VM-safe), `cmdline.hardened` (opt-in aggressive; can brick boot — never bake by default).
 - `config/rootfs/` — the `/etc`+`/usr` tree synced into the image (sysctl, nftables, sshd, zram, apparmor, `bastion-env/`, and the Phase-5 monitoring configs: `prometheus/`, `alertmanager/`, `alloy/`, `loki/`, `grafana/`, `falco/`, `bastion/monitoring/`).
 - `packages/bastion-env/` — dual-env: `providers/{luks2,shufflecake}`, `bin/{bastion-env,bastion-env-pam}`, `pam/bastion-env.pamd`, `pam_module/` (native C **skeleton, unaudited**).
-- `tests/vm/` — `run-qemu.sh`, `checks.sh` (phase-1 acceptance), `dual-env-test.sh` (phase-2). `tests/forensic/` — deniability characterization.
-- `overlay-repo/`, `installer/`, `ci/` — scaffolded; later phases.
+- `tests/vm/` — root/VM suites: `run-qemu.sh`, `checks.sh` (phase-1), `dual-env-test.sh` (phase-2), `install-test.sh` (loopback). Sandbox suites (no root, run via `make test`): `hosting`, `monitoring`, `vapt`, `update`, `release`, `system-toml`. `tests/forensic/` — deniability characterization.
+- `packages/` — bash specs: `bastion` (install + declarative diff/apply), `bastion-env`, `bastion-host`, `bastion-health`, `bastion-scan`, `bastion-update`.
+- `installer/` — TUI + Calamares (Phase 3), `cockpit/bastion/` (optional web UI **scaffold**). `overlay-repo/`, `ci/` — scaffolded.
 
 ## Status / roadmap
-- ✅ **0** architecture · ✅ **1** minimal image · ✅ **2** dual-env · ✅ **3** installer (TUI+Calamares, real-disk FDE, profiles, dual-env wiring) · ✅ **4** hosting CLI (`bastion-host`) · ✅ **5** monitoring (Prometheus/Alertmanager/Loki/Alloy/Grafana/Falco configs + `bastion-health` + `bastion-security-metrics`) · ✅ **6** VAPT (`bastion-scan`: scope-enforced, audited, containerized, assessment-only). Phases 1–3 are code + syntax-checked (not yet built/booted); Phases 4–6's `tests/vm/{hosting,monitoring,vapt}-test.sh` **pass (real runs, sandboxed, no root)** — Phase 6's test exercises the guardrails only, never a live scan. Installer is testable on a dev host via `tests/vm/install-test.sh` (loopback).
-- ⬜ **7** polish/CI/release.
+- ✅ **0** architecture · ✅ **1** minimal image · ✅ **2** dual-env · ✅ **3** installer (TUI+Calamares, real-disk FDE, profiles, dual-env wiring) · ✅ **4** hosting CLI (`bastion-host`) · ✅ **5** monitoring (Prometheus/Alertmanager/Loki/Alloy/Grafana/Falco configs + `bastion-health` + `bastion-security-metrics`) · ✅ **6** VAPT (`bastion-scan`: scope-enforced, audited, containerized, assessment-only) · ✅ **7** polish/release: GitHub Actions CI (`.github/workflows/`), signed reproducible release (`build/release.sh`), `bastion-update` (snapper-bracketed update/rollback), declarative `bastion diff`/`apply` over `/etc/bastion/system.toml`, and the first Rust port (`bastion-core::scope`). Phases 1–3 are code + syntax-checked (not yet built/booted); Phases 4–7 add sandbox suites `tests/vm/{hosting,monitoring,vapt,update,release,system-toml}-test.sh` that **pass (real runs, no root)** — run all via `make test`. Phase 6's test exercises guardrails only, never a live scan. Live ISO (`build/mklive.sh`) and the Cockpit plugin are **scaffolds, not built/booted**; the CI/image workflows have not been run on GitHub here.
 - Each phase's goals + acceptance criteria + known limitations live in its `docs/0N-*.md`.
 
 ## Build / test (Debian/Ubuntu host) — `make help` lists all targets

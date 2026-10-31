@@ -24,6 +24,16 @@ image: ## Build the encrypted, signed, bootable image (image step needs root)
 vm: ## Boot out/bastionos-minimal.img in QEMU (OVMF + swtpm)
 	bash tests/vm/run-qemu.sh
 
+live: ## Build a live ISO from out/rootfs.tar (Phase 7 scaffold; not yet boot-tested)
+	bash build/mklive.sh
+
+release: ## Checksums + manifest + SBOM + signature over out/ artifacts (out/dist/)
+	bash build/release.sh
+
+test: ## Run the sandboxed test suites (no root, no VM)
+	@for t in hosting monitoring vapt update release system-toml; do \
+	  echo "== $$t =="; bash tests/vm/$$t-test.sh || exit 1; done
+
 rust: ## Build all Rust crates in release mode
 	cargo build --release
 
@@ -46,4 +56,4 @@ lint: ## bash -n + shellcheck every shell script
 clean: ## Remove build outputs (out/)
 	rm -rf out
 
-.PHONY: help deps keys rootfs image vm rust rust-lint rust-test pam lint clean
+.PHONY: help deps keys rootfs image vm live release test rust rust-lint rust-test pam lint clean

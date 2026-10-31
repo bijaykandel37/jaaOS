@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# `bastion` — top-level BastionOS CLI. Phase 3 implements `install`; `diff`/`apply` (the
-# declarative /etc/bastion/system.toml reconciler) are stubs for a later phase. Will be ported
-# to Rust (ADR 0002); the bash here is the behavioural spec.
+# `bastion` — top-level BastionOS CLI. `install` installs a profile/packages; `diff`/`apply`
+# reconcile the declarative /etc/bastion/system.toml (Phase 7). Rust-port target per ADR 0002;
+# the bash here is the behavioural spec.
 set -euo pipefail
+
+SYS_TOML="${BASTION_SYSTEM_TOML:-/etc/bastion/system.toml}"
+PREFIX="${BASTION_SYSTEM_PREFIX:-}"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
 
 find_profiles_dir() {
 	local d
@@ -12,11 +18,87 @@ find_profiles_dir() {
 	return 1
 }
 
+# ---- minimal TOML-subset parser: prints "fullkey<TAB>value" (arrays expand to one line each) ----
+parse_toml() { # <file>
+	awk '
+		/^[[:space:]]*#/ { next }
+		/^[[:space:]]*$/ { next }
+		/^[[:space:]]*\[/ { s=$0; sub(/^[[:space:]]*\[/,"",s); sub(/\].*$/,"",s); section=s; next }
+		{
+			line=$0; eq=index(line,"=")
+			if (eq==0) next
+			key=substr(line,1,eq-1); val=substr(line,eq+1)
+			gsub(/[[:space:]]/,"",key)
+			gsub(/^[[:space:]]+|[[:space:]]+$/,"",val)
+			full=(section==""?key:section"."key)
+			if (val ~ /^\[/) {
+				gsub(/[][]/,"",val); n=split(val,arr,",")
+				for(i=1;i<=n;i++){ v=arr[i]; gsub(/^[[:space:]]+|[[:space:]]+$/,"",v); gsub(/"/,"",v); if(v!="") print full"\t"v }
+			} else { gsub(/"/,"",val); if(val!="") print full"\t"val }
+		}
+	' "$1"
+}
+toml_get()  { parse_toml "$SYS_TOML" | awk -F'\t' -v k="$1" '$1==k{print $2; exit}'; }
+toml_list() { parse_toml "$SYS_TOML" | awk -F'\t' -v k="$1" '$1==k{print $2}'; }
+
+# ---- actual-state probes (BASTION_FAKE_* let the test force deterministic drift) ----
+pkg_installed() {
+	if [ -n "${BASTION_FAKE_INSTALLED+x}" ]; then case " $BASTION_FAKE_INSTALLED " in *" $1 "*) return 0;; *) return 1;; esac; fi
+	have dpkg-query && dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"
+}
+svc_enabled() {
+	if [ -n "${BASTION_FAKE_ENABLED+x}" ]; then case " $BASTION_FAKE_ENABLED " in *" $1 "*) return 0;; *) return 1;; esac; fi
+	have systemctl && [ "$(systemctl is-enabled "$1" 2>/dev/null)" = enabled ]
+}
+port_open() { grep -q "{ $1 }" "$PREFIX/etc/nftables.d/bastion-host.nft" 2>/dev/null; }
+
+require_toml() { [ -f "$SYS_TOML" ] || die "no $SYS_TOML (create it; see the shipped example)"; }
+
+cmd_diff() {
+	require_toml
+	local p; p="$(toml_get profile)"
+	echo "profile: ${p:-<none>}"
+	echo "packages:"
+	local x
+	for x in $(toml_list packages); do
+		if pkg_installed "$x"; then echo "  = $x"; else echo "  + $x (install)"; fi
+	done
+	echo "services:"
+	for x in $(toml_list services.enable); do
+		if svc_enabled "$x"; then echo "  = $x (enabled)"; else echo "  + $x (enable)"; fi
+	done
+	for x in $(toml_list services.disable); do
+		if svc_enabled "$x"; then echo "  + $x (disable)"; else echo "  = $x (already off)"; fi
+	done
+	echo "firewall tcp:"
+	for x in $(toml_list firewall.tcp); do
+		if port_open "$x"; then echo "  = $x"; else echo "  + $x (open)"; fi
+	done
+}
+
+cmd_apply() {
+	require_toml
+	local dry=0; [ "${1:-}" = "--dry-run" ] && dry=1
+	[ "$dry" -eq 1 ] || [ "$(id -u)" -eq 0 ] || die "run with sudo (or use --apply --dry-run)"
+	run() { if [ "$dry" -eq 1 ]; then echo "+ $*"; else eval "$*"; fi; }
+
+	local p x
+	p="$(toml_get profile)"
+	[ -n "$p" ] && run "bastion install $p"
+	for x in $(toml_list packages); do pkg_installed "$x" || run "apt-get install -y $x"; done
+	for x in $(toml_list services.enable);  do svc_enabled "$x" || run "systemctl enable --now $x"; done
+	for x in $(toml_list services.disable); do svc_enabled "$x" && run "systemctl disable --now $x"; done
+	for x in $(toml_list firewall.tcp); do
+		port_open "$x" || run "nft add element inet filter bastion_tcp_open { $x }"
+	done
+	[ "$dry" -eq 1 ] && echo "(dry-run: nothing executed)"
+}
+
 cmd="${1:-help}"; shift || true
 case "$cmd" in
 install)
-	[ "$(id -u)" -eq 0 ] || { echo "run with sudo" >&2; exit 1; }
-	[ "$#" -ge 1 ] || { echo "usage: bastion install <profile|package...>" >&2; exit 2; }
+	[ "$(id -u)" -eq 0 ] || die "run with sudo"
+	[ "$#" -ge 1 ] || die "usage: bastion install <profile|package...>"
 	comp="$1"
 	pd="$(find_profiles_dir || true)"
 	if [ -n "$pd" ] && [ -f "$pd/${comp}.packages" ]; then
@@ -28,15 +110,14 @@ install)
 		apt-get update && apt-get install -y "$@"
 	fi
 	;;
-diff|apply)
-	echo "'bastion $cmd' (declarative /etc/bastion/system.toml) is not implemented yet." >&2
-	exit 3
-	;;
+diff)  cmd_diff "$@";;
+apply) cmd_apply "$@";;
 help|--help|-h)
 	cat <<'EOF'
 bastion — BastionOS system CLI
   install <profile|pkg...>   install a profile's components, or packages, with one command
-  diff | apply               reconcile /etc/bastion/system.toml (planned; see brief)
+  diff                       show how the system differs from /etc/bastion/system.toml
+  apply [--dry-run]          reconcile the system to /etc/bastion/system.toml
 EOF
 	;;
 *)

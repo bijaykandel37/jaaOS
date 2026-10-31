@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# BastionOS Phase 7 test: the declarative `bastion diff`/`apply` reconciler over the shipped
+# system.toml, with drift forced deterministically (nothing installed/enabled) so the plan is
+# predictable. No root, no apt, no systemctl changes.
+set -uo pipefail
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+CLI="$REPO/packages/bastion/bin/bastion"
+SBX="$(mktemp -d)"
+trap 'rm -rf "$SBX"' EXIT
+
+export BASTION_SYSTEM_TOML="$REPO/config/rootfs/etc/bastion/system.toml"
+export BASTION_SYSTEM_PREFIX="$SBX"       # empty -> no ports open
+export BASTION_FAKE_INSTALLED=            # set-but-empty -> nothing installed
+export BASTION_FAKE_ENABLED="avahi-daemon"  # only avahi "enabled" -> it needs disabling
+
+pass=0; fail=0
+ok() { echo "PASS  $1"; pass=$((pass + 1)); }
+no() { echo "FAIL  $1"; fail=$((fail + 1)); }
+
+echo "== diff parses every section of the shipped system.toml =="
+d="$(bash "$CLI" diff 2>&1)"
+printf '%s' "$d" | grep -q "profile: server" && ok "profile parsed" || no "profile parsed"
+for p in git tmux jq; do printf '%s' "$d" | grep -q "+ $p (install)" && ok "package $p pending" || no "package $p pending"; done
+for s in ssh nftables auditd; do printf '%s' "$d" | grep -q "+ $s (enable)" && ok "service $s enable" || no "service $s enable"; done
+printf '%s' "$d" | grep -q "+ avahi-daemon (disable)" && ok "avahi disable detected" || no "avahi disable detected"
+for port in 22 80 443; do printf '%s' "$d" | grep -q "+ $port (open)" && ok "port $port pending" || no "port $port pending"; done
+
+echo "== apply --dry-run emits the reconciliation commands, executes nothing =="
+a="$(bash "$CLI" apply --dry-run 2>&1)"
+printf '%s' "$a" | grep -q "bastion install server" && ok "profile install planned" || no "profile install planned"
+printf '%s' "$a" | grep -q "apt-get install -y git" && ok "package install planned" || no "package install planned"
+printf '%s' "$a" | grep -q "systemctl enable --now ssh" && ok "service enable planned" || no "service enable planned"
+printf '%s' "$a" | grep -q "systemctl disable --now avahi-daemon" && ok "service disable planned" || no "service disable planned"
+printf '%s' "$a" | grep -q "bastion_tcp_open { 443 }" && ok "port open planned" || no "port open planned"
+printf '%s' "$a" | grep -q "dry-run: nothing executed" && ok "states nothing executed" || no "states nothing executed"
+
+echo "== satisfied items are not re-applied =="
+# Mark everything as already installed/enabled and port 443 open -> plan should shrink.
+echo 'add element inet filter bastion_tcp_open { 443 }' > "$SBX/etc_nft" 2>/dev/null || true
+mkdir -p "$SBX/etc/nftables.d"; echo 'add element inet filter bastion_tcp_open { 22 }' > "$SBX/etc/nftables.d/bastion-host.nft"
+a2="$(BASTION_FAKE_INSTALLED='git tmux jq' BASTION_FAKE_ENABLED='ssh nftables auditd' bash "$CLI" apply --dry-run 2>&1)"
+printf '%s' "$a2" | grep -q "apt-get install -y git" && no "installed pkg should be skipped" || ok "installed pkg skipped"
+printf '%s' "$a2" | grep -q "enable --now ssh" && no "enabled svc should be skipped" || ok "enabled svc skipped"
+printf '%s' "$a2" | grep -q "{ 22 }" && no "already-open port 22 should be skipped" || ok "already-open port skipped"
+printf '%s' "$a2" | grep -q "disable --now avahi-daemon" && no "avahi off now, skip disable" || ok "avahi disable skipped when off"
+
+echo "== missing system.toml is refused =="
+BASTION_SYSTEM_TOML="$SBX/nope.toml" bash "$CLI" diff >/dev/null 2>&1 && no "missing toml should fail" || ok "missing toml refused"
+
+echo "== $pass passed, $fail failed =="
+[ "$fail" -eq 0 ]

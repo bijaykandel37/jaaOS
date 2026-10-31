@@ -1,0 +1,20 @@
+# BastionOS declarative system configuration.
+#   bastion diff    — show how the running system differs from this file
+#   bastion apply   — reconcile the system to this file (use --dry-run first)
+#
+# A small, fixed TOML subset is supported (scalars + string/number arrays + the [services] and
+# [firewall] sections). It is PARSED, not executed. Edit, then `bastion diff`.
+
+# Which profile's package set this host is based on (minimal|server|desktop|security-lab).
+profile = "server"
+
+# Extra packages to keep installed on top of the profile.
+packages = ["git", "tmux", "jq"]
+
+[services]
+enable  = ["ssh", "nftables", "auditd"]
+disable = ["avahi-daemon"]
+
+[firewall]
+# TCP ports to keep open (added to the Phase-1 nftables bastion_tcp_open set).
+tcp = [22, 80, 443]

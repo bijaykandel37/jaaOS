@@ -1,0 +1,54 @@
+name: CI
+
+# Lint + the sandboxed tests that need neither root nor a VM, plus the Rust gates. The
+# root/VM-only suites (tests/vm/checks.sh, dual-env-test.sh, install-test.sh) and the image build
+# are intentionally NOT here — they run in build-image.yml or on a real host (see docs/08).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell-lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: bash -n + shellcheck
+        run: make lint
+
+  sandbox-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test deps
+        run: sudo apt-get update && sudo apt-get install -y python3-yaml jq
+      - name: Run sandbox test suites (no root, no network)
+        run: |
+          set -e
+          for t in hosting monitoring vapt update system-toml release; do
+            echo "::group::$t-test.sh"
+            bash "tests/vm/$t-test.sh"
+            echo "::endgroup::"
+          done
+
+  rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: unit tests
+        run: cargo test
