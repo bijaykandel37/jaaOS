@@ -22,6 +22,14 @@ POOL="$MIRROR/pool/main/d/debian-archive-keyring/"
 # plus the stable release key). The build fails cleanly if a fetched keyring lacks any of them.
 REQUIRED_KEYS=(78DBA3BC47EF2265 8E9F831205B4BA95 762F67A0B2C39DE4)
 
+# Pin the EXACT keyring package. The download is over HTTPS, but TLS alone would still trust
+# whatever a compromised mirror/CDN served — and a tampered keyring could carry extra (attacker)
+# keys that mmdebstrap would then trust for package signatures. So we pin the .deb by name and
+# SHA-256: anything else aborts the build. To move to a newer keyring, update both lines (verify
+# the hash against Debian's published keyring package first).
+PINNED_DEB="debian-archive-keyring_2025.1_all.deb"
+PINNED_SHA256="9ea7778e443144ca490668737a8ab22dd3e748bb99e805e22ec055abeb3c7fac"
+
 have() { command -v "$1" >/dev/null 2>&1; }
 have curl    || { echo "need curl" >&2; exit 1; }
 have dpkg-deb || { echo "need dpkg-deb (dpkg)" >&2; exit 1; }
@@ -31,12 +39,16 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$OUTDIR"
 
 echo "Fetching Debian archive keyring from snapshot $SNAPSHOT"
-# Newest keyring .deb in the pool (2025.1 for trixie), ignoring URL-encoded duplicates.
-deb="$(curl -sfL "$POOL" | grep -oE 'debian-archive-keyring_[0-9][^"]*_all\.deb' \
-	| grep -v '%2B' | sort -V | uniq | tail -1)"
-[ -n "$deb" ] || { echo "could not locate a keyring .deb under $POOL" >&2; exit 1; }
-echo "  package: $deb"
+deb="$PINNED_DEB"
+echo "  package: $deb (pinned)"
 curl -sfL -o "$tmp/k.deb" "${POOL}${deb}" || { echo "download failed" >&2; exit 1; }
+got="$(sha256sum "$tmp/k.deb" | cut -d' ' -f1)"
+[ "$got" = "$PINNED_SHA256" ] || {
+	echo "keyring package hash mismatch — refusing." >&2
+	echo "  expected $PINNED_SHA256" >&2
+	echo "  got      $got" >&2
+	exit 1
+}
 
 # Extract the real keyring file (2025.1 ships debian-archive-keyring.pgp with a .gpg symlink).
 dpkg-deb --fsys-tarfile "$tmp/k.deb" \

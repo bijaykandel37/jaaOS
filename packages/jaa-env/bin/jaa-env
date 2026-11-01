@@ -20,6 +20,7 @@ read_pw_twice() {
 	printf 'New environment password: ' >&2; read -rs p1; echo >&2
 	printf 'Confirm: ' >&2;                 read -rs p2; echo >&2
 	[ "$p1" = "$p2" ] || { echo "passwords did not match" >&2; return 1; }
+	[ -n "$p1" ] || { echo "empty password rejected" >&2; return 1; }
 	printf '%s' "$p1"
 }
 
@@ -45,7 +46,11 @@ add)
 	echo "Done."
 	;;
 status)
-	if [ -s "$ACTIVE" ] && mountpoint -q "/home/${MANAGED_USER:-__none__}" 2>/dev/null; then
+	# Use the mountpoint as the active-signal: it is world-readable (/proc/mounts), so the
+	# managed user — not just root — gets a truthful answer. (The old gate read a 0600 root
+	# file, so any non-root run always reported "none active".) Reveals nothing about other
+	# environments: identical output whether or not a hidden environment exists.
+	if mountpoint -q "/home/${MANAGED_USER:-__none__}" 2>/dev/null; then
 		echo "environment: active"
 		avail="$(df -h --output=avail "/home/$MANAGED_USER" 2>/dev/null | tail -n1 | tr -d ' ')"
 		[ -n "$avail" ] && echo "free space : $avail"

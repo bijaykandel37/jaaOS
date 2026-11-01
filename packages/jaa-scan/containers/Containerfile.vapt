@@ -24,15 +24,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# nuclei (ProjectDiscovery) is not in Debian; fetch a pinned release. Verify the checksum in a
-# real build (the .sha256 is published alongside the release) before trusting the binary.
+# nuclei (ProjectDiscovery) is not in Debian; fetch a pinned release and verify it against a
+# SHA-256 baked in here (from the upstream nuclei_<ver>_checksums.txt). A committed hash — not
+# the release's own checksums file — is what protects against a tampered/compromised download.
+# To bump the version, update NUCLEI_VERSION and both hashes.
+ARG NUCLEI_SHA256_amd64=725ef892fcffd1b03ad4f0874942fc4b623c0419b6b6c6c91fe4a5a65671f77c
+ARG NUCLEI_SHA256_arm64=a07744736613c73fa2c3aef63e176941e3de95fa76feb4870551a1c444ce7704
 RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends unzip; \
     arch="$(dpkg --print-architecture)"; \
-    case "$arch" in amd64) n=amd64;; arm64) n=arm64;; *) echo "unsupported arch $arch" >&2; exit 1;; esac; \
+    case "$arch" in \
+      amd64) n=amd64; sha="$NUCLEI_SHA256_amd64";; \
+      arm64) n=arm64; sha="$NUCLEI_SHA256_arm64";; \
+      *) echo "unsupported arch $arch" >&2; exit 1;; \
+    esac; \
     url="https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_${n}.zip"; \
     curl -fsSL "$url" -o /tmp/nuclei.zip; \
-    (cd /tmp && unzip -o nuclei.zip nuclei 2>/dev/null || (apt-get update && apt-get install -y --no-install-recommends unzip && unzip -o nuclei.zip nuclei)); \
+    echo "${sha}  /tmp/nuclei.zip" | sha256sum -c -; \
+    unzip -o /tmp/nuclei.zip nuclei -d /tmp; \
     install -m0755 /tmp/nuclei /usr/local/bin/nuclei; \
+    apt-get purge -y unzip; apt-get autoremove -y; \
     rm -rf /tmp/nuclei.zip /tmp/nuclei /var/lib/apt/lists/*
 
 # Unprivileged runtime user; /out is the bind-mounted results dir.

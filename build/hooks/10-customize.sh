@@ -26,12 +26,17 @@ cat > /etc/hosts <<'EOF'
 ::1		localhost ip6-localhost ip6-loopback
 EOF
 
-# --- default user (demo credentials; change on first login / via installer) ---
+# --- default user ---
+# The prebuilt image ships ONE console account, `jaa`, with a well-known demo password that
+# MUST be changed on first login (enforced below). root stays LOCKED (no password) — logging
+# in as root is via `sudo` from jaa. This is a dev/demo image; a real deployment is produced by
+# the installer, which prompts for its own credentials. Never ship a baked-in root password.
 if ! id jaa >/dev/null 2>&1; then
 	useradd --create-home --shell /bin/bash --groups sudo jaa
 fi
 echo "jaa:jaa" | chpasswd
-echo "root:jaa"    | chpasswd
+passwd -l root >/dev/null            # lock root; no baked-in root password (use sudo from jaa)
+passwd -e jaa  >/dev/null            # expire the demo password -> must be changed at first login
 install -d -m 0700 -o jaa -g jaa /home/jaa/.ssh
 
 # --- make the shipped helper executable ---

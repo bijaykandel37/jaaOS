@@ -24,6 +24,34 @@ warn() { echo "WARN: $*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 need_root() { [ -n "$PREFIX" ] || [ "$(id -u)" -eq 0 ] || die "run with sudo"; }
 
+# ---- input validation ------------------------------------------------------------
+# Every externally-supplied value is checked before it reaches a filename, a generated
+# config, an nft element, or systemctl. This both prevents path traversal / config
+# injection and keeps a crafted value from ever being executed (see read_state: state
+# files are PARSED, never sourced).
+valid_domain()  { [ "${#1}" -le 253 ] && [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]]; }
+valid_name()    { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$ ]]; }
+valid_port()    { [[ "$1" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$1" -le 65535 ]; }
+valid_php()     { [[ "$1" =~ ^[0-9]+\.[0-9]+$ ]]; }
+valid_algo()    { case "$1" in roundrobin|leastconn) return 0;; *) return 1;; esac; }
+valid_state()   { case "$1" in MASTER|BACKUP) return 0;; *) return 1;; esac; }
+valid_iface()   { [[ "$1" =~ ^[A-Za-z0-9._@:-]{1,15}$ ]]; }
+valid_vip()     { [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]]; }
+valid_vrid()    { [[ "$1" =~ ^[0-9]{1,3}$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 255 ]; }
+valid_prio()    { [[ "$1" =~ ^[0-9]{1,3}$ ]] && [ "$1" -le 255 ]; }
+valid_hpath()   { [[ "$1" =~ ^/[A-Za-z0-9._~/-]*$ ]]; }                 # health path
+valid_root()    { [[ "$1" =~ ^/[A-Za-z0-9._/-]+$ ]] && [[ "$1" != *..* ]]; }
+valid_proxy()   { [[ "$1" =~ ^https?://[A-Za-z0-9._-]+(:[1-9][0-9]{0,4})?(/[A-Za-z0-9._~/-]*)?$ ]]; }
+valid_backend() {  # HOST:PORT — HOST an IPv4/hostname, PORT 1-65535
+	local h="${1%:*}" pt="${1##*:}"
+	[ "$h" != "$1" ] || return 1          # must contain a colon
+	valid_port "$pt" && [[ "$h" =~ ^[A-Za-z0-9.-]{1,253}$ ]] && [[ "$h" != *..* ]]
+}
+
+# Read one KEY=value from a state file WITHOUT sourcing it (state files hold user-supplied
+# values like domains/backends; sourcing them would be stored command execution as root).
+read_state() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1; }
+
 open_port() { # <port>
 	local port="$1" f; f="$(p "$NFT_MANAGED")"
 	mkdir -p "$(dirname "$f")"; touch "$f"
@@ -110,6 +138,11 @@ site_create() {
 		--engine) engine="$2"; shift 2;;
 		*) die "unknown option: $1";;
 	esac; done
+	valid_domain "$domain" || die "invalid domain: $domain"
+	case "$engine" in nginx|caddy) ;; *) die "unknown engine: $engine (nginx|caddy)";; esac
+	[ -z "$php" ] || valid_php "$php" || die "invalid --php version: $php (e.g. 8.3)"
+	[ -z "$proxy" ] || valid_proxy "$proxy" || die "invalid --proxy URL: $proxy"
+	[ -z "$root" ] || valid_root "$root" || die "invalid --root path: $root"
 	root="${root:-/srv/www/$domain}"
 	[ -n "$php" ] && [ ! -S "/run/php/php${php}-fpm.sock" ] && [ -z "$PREFIX" ] && warn "php${php}-fpm socket not found — install php${php}-fpm"
 	mkdir -p "$(p "$STATE")/sites" "$(p "$root")"
@@ -152,9 +185,9 @@ site_list() { ls -1 "$(p "$STATE")/sites" 2>/dev/null | sed 's/\.conf$//' || tru
 site_rm() {
 	need_root
 	local domain="${1:?usage: jaa-host site rm <domain>}"
+	valid_domain "$domain" || die "invalid domain: $domain"
 	local rec="$(p "$STATE")/sites/$domain.conf"; [ -f "$rec" ] || die "no such site: $domain"
-	# shellcheck disable=SC1090
-	. "$rec"
+	local engine; engine="$(read_state "$rec" engine)"
 	case "${engine:-nginx}" in
 		nginx) rm -f "$(p "$NGINX_ENABLED")/$domain.conf" "$(p "$NGINX_AVAIL")/$domain.conf"; reload_if_valid nginx nginx -t;;
 		caddy) rm -f "$(p "$CADDY_DIR")/$domain.caddy"; reload_if_valid caddy caddy validate --config /etc/caddy/Caddyfile;;
@@ -177,7 +210,13 @@ lb_create() {
 		--engine) engine="$2"; shift 2;;
 		*) die "unknown option: $1";;
 	esac; done
+	valid_name "$name" || die "invalid lb name: $name"
+	case "$engine" in haproxy|traefik) ;; *) die "unknown engine: $engine (haproxy|traefik)";; esac
+	valid_algo "$algo" || die "invalid --algo: $algo (roundrobin|leastconn)"
+	valid_port "$port" || die "invalid --port: $port"
+	[ -z "$health" ] || valid_hpath "$health" || die "invalid --health path: $health"
 	[ "${#backends[@]}" -ge 1 ] || die "need at least one --backend H:P"
+	local b; for b in "${backends[@]}"; do valid_backend "$b" || die "invalid --backend: $b (want HOST:PORT)"; done
 	mkdir -p "$(p "$STATE")/lb"
 
 	case "$engine" in
@@ -229,12 +268,13 @@ lb_list() { ls -1 "$(p "$STATE")/lb" 2>/dev/null | sed 's/\.conf$//' || true; }
 lb_rm() {
 	need_root
 	local name="${1:?usage: jaa-host lb rm <name>}"
+	valid_name "$name" || die "invalid lb name: $name"
 	local rec="$(p "$STATE")/lb/$name.conf"; [ -f "$rec" ] || die "no such lb: $name"
-	# shellcheck disable=SC1090
-	. "$rec"
+	local engine port; engine="$(read_state "$rec" engine)"; port="$(read_state "$rec" port)"
 	rm -f "$(p "$HAPROXY_DIR")/$name.cfg" "$(p "$TRAEFIK_DIR")/$name.yml"
 	[ "${engine:-haproxy}" = haproxy ] && reload_if_valid haproxy true
-	rm -f "$rec"; unregister_monitor "lb-$name"; close_port "${port:-80}"
+	valid_port "${port:-}" || port=80
+	rm -f "$rec"; unregister_monitor "lb-$name"; close_port "$port"
 	echo "lb '$name' removed."
 }
 
@@ -253,6 +293,12 @@ ha_create() {
 		*) die "unknown option: $1";;
 	esac; done
 	[ -n "$vip" ] && [ -n "$iface" ] || die "need --vip and --interface"
+	valid_name "$name" || die "invalid ha name: $name"
+	valid_vip "$vip" || die "invalid --vip (want IPv4 or IPv4/CIDR): $vip"
+	valid_iface "$iface" || die "invalid --interface: $iface"
+	valid_prio "$prio" || die "invalid --priority (0-255): $prio"
+	valid_state "$state" || die "invalid --state (MASTER|BACKUP): $state"
+	valid_vrid "$vrid" || die "invalid --vrid (1-255): $vrid"
 	mkdir -p "$(p "$KEEPALIVED_DIR")"
 	cat > "$(p "$KEEPALIVED_DIR")/$name.conf" <<EOF
 vrrp_instance ${name} {

@@ -16,13 +16,21 @@ set -euo pipefail
 
 DRYRUN="${JAA_UPDATE_DRYRUN:-0}"
 SNAPPER_CONF="${JAA_UPDATE_SNAPPER_CONF:-root}"
+# Interpolated into the command strings run() executes, so keep it to a plain config name.
+[[ "$SNAPPER_CONF" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "ERROR: invalid snapper config name: $SNAPPER_CONF" >&2; exit 1; }
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
 warn() { echo "WARN: $*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 need_root() { [ "$DRYRUN" = 1 ] || [ "$(id -u)" -eq 0 ] || die "run with sudo"; }
 need_snapper() { [ "$DRYRUN" = 1 ] || have snapper || die "snapper not installed"; }
-run() { if [ "$DRYRUN" = 1 ]; then echo "+ $*"; else eval "$*"; fi; }
+run() { if [ "$DRYRUN" = 1 ]; then echo "+ $*"; else eval "$*"; fi; }   # inputs validated above/below
+
+# Fingerprint of every installed kernel + initramfs. A kernel upgrade installs a NEW
+# versioned package (not a new version of the running one), and initramfs regenerations
+# rewrite files in place, so hash the files themselves; either change means the signed UKI
+# on the ESP no longer matches what is installed.
+boot_fingerprint() { cat /boot/vmlinuz-* /boot/initrd.img-* 2>/dev/null | sha256sum | cut -d' ' -f1; }
 
 cmd_status() {
 	echo "jaaOS update status"
@@ -67,13 +75,13 @@ cmd_apply() {
 	local pre
 	pre="$(snapper -c "$SNAPPER_CONF" create -t pre -p -d 'jaa-update pre')" || die "pre-snapshot failed"
 	# Record what the kernel looks like before, to detect a kernel-touching upgrade.
-	local kbefore; kbefore="$(dpkg-query -W -f='${Version}\n' "linux-image-$(uname -r)" 2>/dev/null || true)"
+	local kbefore; kbefore="$(boot_fingerprint)"
 	apt-get update -qq
 	apt-get -y full-upgrade
 	snapper -c "$SNAPPER_CONF" create -t post --pre-number "$pre" -d 'jaa-update post' || warn "post-snapshot failed"
-	local kafter; kafter="$(dpkg-query -W -f='${Version}\n' "linux-image-$(uname -r)" 2>/dev/null || true)"
-	if [ -n "$kafter" ] && [ "$kbefore" != "$kafter" ]; then
-		warn "kernel changed ($kbefore -> $kafter). The running UKI is signed+immutable; rebuild and"
+	local kafter; kafter="$(boot_fingerprint)"
+	if [ "$kbefore" != "$kafter" ]; then
+		warn "kernel/initramfs changed. The running UKI is signed+immutable; rebuild and"
 		warn "re-sign the image (make image) and re-enroll, or the new kernel will not boot under Secure Boot."
 	fi
 	echo "Done. Roll back with: jaa-update rollback"
@@ -83,6 +91,7 @@ cmd_rollback() {
 	need_root
 	local target="${1:-}"
 	need_snapper
+	[ -z "$target" ] || [[ "$target" =~ ^[0-9]+$ ]] || die "snapshot number must be numeric: $target"
 	if [ -z "$target" ]; then
 		echo "Latest snapshots (pick a number to roll back to):"
 		run "snapper -c '$SNAPPER_CONF' list | tail -n 6"

@@ -31,8 +31,9 @@ prom_up() { [ -n "$(fetch "$PROM_URL/-/ready")" ]; }
 
 # Scalar result of an instant PromQL query, or "" if Prometheus is unreachable / empty.
 prom_scalar() { # <promql>
-	have jq || return 0
-	local q; q=$(fetch "$PROM_URL/api/v1/query?query=$1")
+	have jq && have curl || return 0
+	# URL-encode the query: raw PromQL contains {} (which curl treats as a glob) and quotes.
+	local q; q=$(curl -sf --max-time 2 -G --data-urlencode "query=$1" "$PROM_URL/api/v1/query" 2>/dev/null || true)
 	[ -n "$q" ] || return 0
 	printf '%s' "$q" | jq -r '.data.result[0].value[1] // empty' 2>/dev/null
 }
@@ -222,6 +223,14 @@ cmd_enable() {
 			echo "  not installed: ${u}  (install it, then re-run 'jaa-health enable --mode $mode')"
 		fi
 	done
+	# The security textfile collector (auditd/AIDE/AppArmor/Falco metrics) runs from a timer in
+	# both modes; without it those metrics, dashboards and alerts never populate.
+	if [ -x /usr/local/sbin/jaa-security-metrics ]; then
+		systemctl enable --now jaa-security-metrics.timer 2>/dev/null \
+			&& echo "  enabled jaa-security-metrics.timer" || warn "could not enable jaa-security-metrics.timer"
+	else
+		echo "  not installed: /usr/local/sbin/jaa-security-metrics  (sudo install -m0755 packages/jaa-health/bin/jaa-security-metrics /usr/local/sbin/)"
+	fi
 	# Full mode disables nothing automatically; switching full->lite leaves extras running.
 	# Stop them explicitly if you want: systemctl disable --now <unit>.
 	echo "Reach dashboards over an SSH tunnel; nothing here listens off 127.0.0.1."

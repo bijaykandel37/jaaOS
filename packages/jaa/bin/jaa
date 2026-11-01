@@ -76,22 +76,41 @@ cmd_diff() {
 	done
 }
 
+# Package/service/profile names: Debian's own grammar. Ports: 1-65535. Anything else in
+# system.toml is a typo or tampering — reject it rather than feed it to a command.
+valid_pkg()  { [[ "$1" =~ ^[a-z0-9][a-z0-9+._-]*$ ]]; }
+valid_unit() { [[ "$1" =~ ^[A-Za-z0-9@._-]+$ ]]; }
+valid_port() { [[ "$1" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$1" -le 65535 ]; }
+
 cmd_apply() {
 	require_toml
 	local dry=0; [ "${1:-}" = "--dry-run" ] && dry=1
-	[ "$dry" -eq 1 ] || [ "$(id -u)" -eq 0 ] || die "run with sudo (or use --apply --dry-run)"
-	run() { if [ "$dry" -eq 1 ]; then echo "+ $*"; else eval "$*"; fi; }
+	[ "$dry" -eq 1 ] || [ "$(id -u)" -eq 0 ] || die "run with sudo (or use apply --dry-run)"
+	# Run an argv ARRAY — never a string through eval, so a crafted system.toml value cannot
+	# become a second command. Each token is validated before it reaches here.
+	run() { if [ "$dry" -eq 1 ]; then echo "+ $*"; else "$@"; fi; }
 
 	local p x
 	p="$(toml_get profile)"
-	[ -n "$p" ] && run "jaa install $p"
-	for x in $(toml_list packages); do pkg_installed "$x" || run "apt-get install -y $x"; done
-	for x in $(toml_list services.enable);  do svc_enabled "$x" || run "systemctl enable --now $x"; done
-	for x in $(toml_list services.disable); do svc_enabled "$x" && run "systemctl disable --now $x"; done
+	if [ -n "$p" ]; then valid_pkg "$p" || die "invalid profile name: $p"; run jaa install "$p"; fi
+	for x in $(toml_list packages); do
+		valid_pkg "$x" || die "invalid package name: $x"
+		pkg_installed "$x" || run apt-get install -y "$x"
+	done
+	for x in $(toml_list services.enable); do
+		valid_unit "$x" || die "invalid service name: $x"
+		svc_enabled "$x" || run systemctl enable --now "$x"
+	done
+	for x in $(toml_list services.disable); do
+		valid_unit "$x" || die "invalid service name: $x"
+		svc_enabled "$x" && run systemctl disable --now "$x"
+	done
 	for x in $(toml_list firewall.tcp); do
-		port_open "$x" || run "nft add element inet filter jaa_tcp_open { $x }"
+		valid_port "$x" || die "invalid tcp port: $x"
+		port_open "$x" || run nft add element inet filter jaa_tcp_open "{ $x }"
 	done
 	[ "$dry" -eq 1 ] && echo "(dry-run: nothing executed)"
+	return 0
 }
 
 cmd="${1:-help}"; shift || true

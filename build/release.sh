@@ -83,10 +83,14 @@ sde="${SOURCE_DATE_EPOCH:-$(date -u -d "$(printf '%s' "$SNAPSHOT" | sed -E 's/^(
 log "wrote manifest.json (version $version)"
 
 # ---- signing ----
+# A secret key materialized from $MINISIGN_SECRET_KEY must not outlive the script, even if it
+# is interrupted mid-signing, so its removal is tied to EXIT rather than the happy path.
+KEY_TMP=""
+trap '[ -n "$KEY_TMP" ] && rm -f "$KEY_TMP"' EXIT
 sign_minisign() {
-	local keyfile="" tmp=""
+	local keyfile=""
 	if [ -n "${MINISIGN_SECRET_KEY:-}" ]; then
-		tmp="$(mktemp)"; printf '%s\n' "$MINISIGN_SECRET_KEY" > "$tmp"; keyfile="$tmp"
+		KEY_TMP="$(mktemp)"; printf '%s\n' "$MINISIGN_SECRET_KEY" > "$KEY_TMP"; keyfile="$KEY_TMP"
 	elif [ -f "${MINISIGN_KEY_FILE:-}" ]; then
 		keyfile="$MINISIGN_KEY_FILE"
 	elif [ -f "$HOME/.minisign/minisign.key" ]; then
@@ -95,13 +99,15 @@ sign_minisign() {
 	[ -n "$keyfile" ] || return 1
 	printf '%s\n' "${MINISIGN_KEY_PASSWORD:-}" | minisign -S -s "$keyfile" -m SHA256SUMS >/dev/null 2>&1
 	local rc=$?
-	[ -n "$tmp" ] && rm -f "$tmp"
+	[ -n "$KEY_TMP" ] && rm -f "$KEY_TMP" && KEY_TMP=""
 	return "$rc"
 }
 
 if have minisign && sign_minisign; then
 	log "signed SHA256SUMS -> SHA256SUMS.minisig (minisign)"
-elif have gpg && [ -n "${GPG_SIGNING_KEY:-}${GNUPGHOME:-}" ] && gpg --batch --yes --detach-sign --armor SHA256SUMS 2>/dev/null; then
+# GPG_SIGNING_KEY selects the key; without it gpg would silently use its default key.
+elif have gpg && [ -n "${GPG_SIGNING_KEY:-}${GNUPGHOME:-}" ] \
+	&& gpg --batch --yes ${GPG_SIGNING_KEY:+--local-user "$GPG_SIGNING_KEY"} --detach-sign --armor SHA256SUMS 2>/dev/null; then
 	log "signed SHA256SUMS -> SHA256SUMS.asc (gpg)"
 else
 	log "WARNING: no signing key available — artifacts are UNSIGNED."

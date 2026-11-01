@@ -61,5 +61,18 @@ echo "== list =="
 bash "$CLI" site list | grep -q demo.local && ok "site list shows demo.local" || no "site list shows demo.local"
 bash "$CLI" lb list | grep -q app-lb && ok "lb list shows app-lb" || no "lb list shows app-lb"
 
+echo "== security: input validation + no state-file sourcing (regression) =="
+# A crafted state file must be PARSED on rm, never sourced (would be root RCE on the real system).
+mkdir -p "$SBX/etc/jaa/host/sites"
+printf 'domain=demo.local\nengine=nginx$(touch %s/PWNED)\n' "$SBX" > "$SBX/etc/jaa/host/sites/demo.local.conf"
+bash "$CLI" site rm demo.local >/dev/null 2>&1 || true
+[ ! -e "$SBX/PWNED" ] && ok "state file parsed, not sourced" || no "state file parsed, not sourced"
+# Path traversal / shell metacharacters in names are refused before any file is written.
+bash "$CLI" site create '../../etc/passwd' >/dev/null 2>&1 && no "traversal domain accepted" || ok "traversal domain refused"
+bash "$CLI" site create 'a;touch /tmp/x.local' >/dev/null 2>&1 && no "injection domain accepted" || ok "injection domain refused"
+bash "$CLI" lb create ok --backend '$(id):80' >/dev/null 2>&1 && no "injection backend accepted" || ok "injection backend refused"
+bash "$CLI" lb create ok --backend '10.0.0.1:99999' >/dev/null 2>&1 && no "bad port accepted" || ok "bad backend port refused"
+bash "$CLI" ha create ok --vip 'x;reboot' --interface eth0 >/dev/null 2>&1 && no "bad vip accepted" || ok "bad vip refused"
+
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

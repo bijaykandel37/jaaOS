@@ -9,7 +9,7 @@
 # secrets / keys — never commit
 *.key
 *.pem
-secureboot/keys/
+build/secureboot/keys/
 overlay-repo/keys/
 # editor / os
 .DS_Store

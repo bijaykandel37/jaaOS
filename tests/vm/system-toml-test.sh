@@ -44,6 +44,23 @@ printf '%s' "$a2" | grep -q "enable --now ssh" && no "enabled svc should be skip
 printf '%s' "$a2" | grep -q "{ 22 }" && no "already-open port 22 should be skipped" || ok "already-open port skipped"
 printf '%s' "$a2" | grep -q "disable --now avahi-daemon" && no "avahi off now, skip disable" || ok "avahi disable skipped when off"
 
+echo "== apply --dry-run succeeds with exit 0 (regression) =="
+JAA_SYSTEM_TOML="$REPO/config/rootfs/etc/jaa/system.toml" bash "$CLI" apply --dry-run >/dev/null 2>&1 \
+	&& ok "apply --dry-run exits 0" || no "apply --dry-run exits 0"
+
+echo "== malicious system.toml tokens are rejected, not eval'd (regression) =="
+mkdir -p "$SBX/t"
+for tok in 'packages = ["git; touch PWNED"]' 'tcp = [80]
+[s]
+x = 1
+[firewall2]' ; do :; done
+printf 'packages = ["a; touch %s/PWNED"]\n' "$SBX/t" > "$SBX/inj.toml"
+JAA_SYSTEM_TOML="$SBX/inj.toml" JAA_FAKE_INSTALLED= bash "$CLI" apply --dry-run >/dev/null 2>&1
+{ [ ! -e "$SBX/t/PWNED" ]; } && ok "package-name injection refused" || no "package-name injection refused"
+printf '[firewall]\ntcp = [99999]\n' > "$SBX/badport.toml"
+JAA_SYSTEM_TOML="$SBX/badport.toml" bash "$CLI" apply --dry-run >/dev/null 2>&1 \
+	&& no "out-of-range port should be refused" || ok "out-of-range port refused"
+
 echo "== missing system.toml is refused =="
 JAA_SYSTEM_TOML="$SBX/nope.toml" bash "$CLI" diff >/dev/null 2>&1 && no "missing toml should fail" || ok "missing toml refused"
 
