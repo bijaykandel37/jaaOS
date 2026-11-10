@@ -3,8 +3,8 @@
 Status: **CI, release tooling, the update/rollback CLI, the declarative reconciler, and the first
 Rust port are written and tested in a sandbox (real runs, no root).** The image-building and
 release *workflows* are written and YAML-validated but have not been executed on GitHub here;
-the live ISO and the Cockpit plugin are **scaffolds, not yet built/booted**. Honest status per
-item below.
+the Cockpit plugin is a **scaffold**. The **lite live ISO is built and boot-tested in QEMU**
+(BIOS + UEFI, see below). Honest status per item below.
 
 ## What this phase delivers
 
@@ -16,7 +16,7 @@ item below.
 | Update | `jaa-update` — snapshot-bracketed `apply`/`rollback` | **tested** (`update-test.sh`, dry-run) |
 | Declarative | `jaa diff`/`apply` over `/etc/jaa/system.toml` | **tested** (`system-toml-test.sh`) |
 | Rust port | `jaa-core::scope` — IPv4/scope logic ported from `jaa-scan`, with unit tests | written; compiles+tests in CI (no toolchain here) |
-| Live ISO | `build/mklive.sh` | **scaffold**, not built/booted |
+| Live ISO | `build/mklive.sh` + `build/profiles/lite.packages` — ~190 MB hybrid BIOS/UEFI ISO | **built + booted to login in QEMU** (`tests/vm/live-iso-boot.sh`); not yet on real hardware |
 | Cockpit | `installer/cockpit/jaa/` (optional web UI) | **scaffold**, not audited |
 
 ## CI (the point of "GitHub + cloud Claude Code")
@@ -80,6 +80,33 @@ specs (ADR 0002). Its `#[test]`s mirror `tests/vm/vapt-test.sh`, so CI's `cargo 
 behaviour. The CLIs' Rust crates remain clap scaffolds until ported verb-by-verb; they could not
 be compiled in this environment (no toolchain), which is why the bash specs stay authoritative.
 
+## Lite live ISO (`make live`)
+
+The full disk image is a fixed-size raw file (`IMG_SIZE`, now 4G by default; it was 12G) and
+pulls in vendor firmware, microcode, the UKI tool chain (`systemd-ukify` brings Python),
+snapper, BlueZ and the AppArmor utilities. The **lite** profile leaves those out to make a small,
+console-first live system that boots from a DVD or USB stick:
+
+| | Full disk image (`make image`) | Lite live ISO (`make live`) |
+|---|---|---|
+| Size | 4G raw file (was 12G) | **~190 MB** ISO (squashfs ~125 MB, xz) |
+| Boot | signed UKI, Secure Boot, LUKS2 + Btrfs | GRUB hybrid ISO, BIOS + UEFI, **Secure Boot off** |
+| Firmware | WiFi/GPU/NIC firmware + microcode | none by default; `FIRMWARE=1` adds them |
+| Persistence | yes | no (live; changes lost on reboot) |
+
+Same base as the image: `config/rootfs` and `build/hooks/10-customize.sh`, so the same sysctl,
+nftables, sshd and AppArmor defaults. Live-only changes are in `build/hooks/20-live.sh`: an
+empty machine-id, SSH host keys generated at each boot (never shipped in the ISO), and a working
+apt source.
+
+Size controls in `build/mklive.sh`: docs, man/info pages and translations are never unpacked
+(copyright files are kept). Driver families a console OS does not use are skipped: InfiniBand,
+TV/webcam media, staging, ISDN and sound (`TRIM_MODULES=0` keeps them). The squashfs is xz
+with the x86 BCJ filter.
+
+Log in as `jaa` / `jaa`; you must choose a new password at first login. Root is locked; use
+`sudo`. SSH accepts public keys only and none are installed, so it is closed until you add one.
+
 ## Build / test (copy-paste)
 
 ```bash
@@ -90,6 +117,10 @@ make lint            # bash -n + shellcheck
 make rust-lint && make rust-test
 # release tooling over a completed build:
 make image && make release && ls out/dist/
+# lite live ISO (needs root + network to the Debian mirrors), then boot-test it in QEMU:
+make live && make live-test && ls -lh out/jaaos-lite.iso
+# same, with WiFi/GPU firmware + microcode for real laptops:
+make live FIRMWARE=1
 ```
 
 ## Acceptance criteria
@@ -103,6 +134,7 @@ make image && make release && ls out/dist/
 - [x] `jaa-core::scope` unit tests mirror the bash scope gate. *(cargo test, in CI)*
 - [ ] On GitHub: CI is green; `build-image.yml` produces a signed image artifact.
 - [ ] On a real host: the image builds, boots (`make vm`), updates, and rolls back.
+- [x] Lite live ISO boots to a login prompt on BIOS and UEFI with no failed units. *(live-iso-boot.sh, QEMU)*
 - [ ] Live ISO boots to a session offering the TUI + Calamares installers.
 - [ ] The Cockpit plugin loads and runs the CLIs.
 
@@ -113,8 +145,10 @@ make image && make release && ls out/dist/
    images on first run.
 2. **No boot-test in CI.** Hosted runners lack nested KVM; `make vm` on a real host is the boot
    gate.
-3. **Live ISO (`build/mklive.sh`) is a scaffold** — it lays out the squashfs/ISO tree but the
-   live-boot package set and the signed EFI boot payload are TODO; no ISO has booted.
+3. **The lite live ISO is unsigned for Secure Boot and has no installer.** It boots with
+   grub-mkrescue's unsigned GRUB, so Secure Boot must be off. Debian's signed shim + GRUB
+   would fix that. It does not include the TUI/Calamares installers yet. It has booted in QEMU
+   only, not on real hardware. Without `FIRMWARE=1` most WiFi chips will not work.
 4. **Cockpit plugin is a starter, unaudited** UI that only runs the read-only CLIs; it is optional
    and not part of the default profiles.
 5. **Rust is ported incrementally.** Only `jaa-core::scope` is ported so far; the CLI crates

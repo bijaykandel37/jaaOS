@@ -1,0 +1,60 @@
+# jaaOS — LITE profile (Debian 13 "trixie", amd64). Used by build/mklive.sh for the live ISO.
+# Goal: a small, console-first jaaOS that boots from USB/ISO on BIOS and UEFI machines.
+# One package per line; # starts a comment. mmdebstrap installs WITHOUT Recommends, so every
+# runtime need is listed explicitly.
+#
+# Left out on purpose, compared with minimal.packages (those packages are what make the full
+# image big):
+#   - vendor firmware blobs (firmware-*), CPU microcode -> opt in with FIRMWARE=1
+#     (adds build/profiles/lite-firmware.packages)
+#   - systemd-ukify (pulls in Python), systemd-boot, sbsigntool, tpm2-tools, efibootmgr:
+#     the signed-UKI disk image (build/mkimage.sh) needs these; a live ISO does not
+#   - snapper, apparmor-utils (pulls in Python), apparmor-profiles, bluez
+# Docs, man pages and non-English translations are excluded at install time (see mklive.sh).
+
+# --- kernel + live boot ---
+linux-image-amd64
+live-boot
+live-boot-initramfs-tools
+initramfs-tools
+zstd
+
+# --- init / core system ---
+systemd
+systemd-sysv
+systemd-resolved
+systemd-timesyncd
+systemd-zram-generator
+udev
+dbus
+locales
+
+# --- disks / crypto (enough to open and repair a jaaOS install) ---
+cryptsetup
+btrfs-progs
+dosfstools
+
+# --- networking (wired; WiFi also needs FIRMWARE=1 on most hardware) ---
+network-manager
+wpasupplicant
+iproute2
+netbase
+iputils-ping
+nftables
+openssh-server
+ca-certificates
+debian-archive-keyring
+curl
+
+# --- hardening ---
+apparmor
+auditd
+
+# --- base userland ---
+sudo
+bash-completion
+less
+vim-tiny
+nano
+htop
+pciutils
