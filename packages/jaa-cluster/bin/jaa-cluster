@@ -23,6 +23,7 @@ MODULES_F=/etc/modules-load.d/jaa-cluster.conf
 NM_F=/etc/NetworkManager/conf.d/90-jaa-rke2.conf
 ZRAM_F=/etc/systemd/zram-generator.conf
 NODE_TOKEN=/var/lib/rancher/rke2/server/node-token
+CANAL_CFG=/var/lib/rancher/rke2/server/manifests/jaa-canal-iface.yaml
 IMAGES_SRC="${JAA_RKE2_IMAGES:-/usr/share/jaaos/rke2/images}"
 RKE2=/usr/local/bin/rke2
 SVC_TYPE=_jaa-rke2._tcp
@@ -167,6 +168,47 @@ write_rke2_config() { # <role> <name> <server-url> <token> [node-ip]
 	} | write_file "$RKE2_CFG" 0600
 }
 
+# Regex matching IPv4 addresses inside the given CIDRs, for flannel's --iface-regex (it matches
+# interface names OR addresses). Exact for any prefix length: whole octets are literal, a partial
+# octet becomes an alternation of its values.
+cidr_ip_regex() { # <cidr[,cidr...]>
+	local c out=() a b c3 d len full part base n i alts
+	IFS=',' read -ra _cs <<<"$1"
+	for c in "${_cs[@]}"; do
+		IFS='./' read -r a b c3 d len <<<"$c"
+		local o=("$a" "$b" "$c3" "$d") r="^"
+		full=$((len / 8)); part=$((len % 8))
+		for ((i = 0; i < full; i++)); do r+="${o[i]}\\."; done
+		if [ "$part" -gt 0 ] && [ "$full" -lt 4 ]; then
+			n=$((1 << (8 - part))); base=$(( o[full] & ~(n - 1) & 255 )); alts=""
+			for ((i = base; i < base + n; i++)); do alts+="${alts:+|}$i"; done
+			r+="($alts)"; [ "$full" -lt 3 ] && r+="\\."
+		fi
+		out+=("$r")
+	done
+	local IFS='|'; printf '%s' "${out[*]}"
+}
+
+# Multi-NIC machines: flannel (inside canal) otherwise puts the VXLAN tunnel on the default-route
+# NIC, not the cluster LAN, and pod traffic between nodes silently goes nowhere. The master pins
+# it cluster-wide to "the NIC whose address is in the cluster LAN" via the canal chart.
+write_canal_iface() { # <cidrs>
+	[ -n "$1" ] || { rm -f "$(p "$CANAL_CFG")"; return 0; }
+	local rx; rx="$(cidr_ip_regex "$1")"
+	write_file "$CANAL_CFG" 0600 <<EOF
+# Managed by jaa-cluster: run flannel's VXLAN over the cluster LAN ($1) on every node.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-canal
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    flannel:
+      regexIface: '$rx'
+EOF
+}
+
 write_host_tuning() {
 	write_file "$SYSCTL_F" 0644 <<'EOF'
 # Managed by jaa-cluster: kernel settings Kubernetes networking needs.
@@ -190,7 +232,7 @@ EOF
 }
 
 remove_host_tuning() {
-	rm -f "$(p "$SYSCTL_F")" "$(p "$MODULES_F")" "$(p "$NM_F")" "$(p "$RKE2_CFG")"
+	rm -f "$(p "$SYSCTL_F")" "$(p "$MODULES_F")" "$(p "$NM_F")" "$(p "$RKE2_CFG")" "$(p "$CANAL_CFG")"
 	local z; z="$(p "$ZRAM_F")"
 	[ -f "$z.jaa-orig" ] && mv "$z.jaa-orig" "$z"
 	return 0
@@ -294,6 +336,7 @@ cmd_setup() {
 	fi
 
 	write_rke2_config "$role" "$name" "$url" "$token" "$nodeip"
+	if [ "$role" = server ]; then write_canal_iface "$cidrs"; else rm -f "$(p "$CANAL_CFG")"; fi
 	write_firewall "$role" "$cidrs"
 	write_host_tuning
 	set_hostname "$name"

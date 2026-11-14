@@ -49,6 +49,16 @@ check "hosts 127.0.1.1 updated"      has "$SBX/etc/hosts" 'jaa-master-ab12'
 check "rke2-server enabled"          has "$ACT" 'systemctl enable rke2-server.service'
 check "rke2-agent disabled"          has "$ACT" 'systemctl disable rke2-agent.service'
 
+CANAL="$SBX/var/lib/rancher/rke2/server/manifests/jaa-canal-iface.yaml"
+check "canal pinned to the LAN NIC (master)" has "$CANAL" "regexIface: '^192\\.168\\.1\\.'"
+
+echo "== flannel interface regex matches exactly the LAN =="
+rx_of() { JAA_CLUSTER_PREFIX="$SBX/rx" bash "$CLI" setup master --name rx --cidr "$1" >/dev/null; sed -n "s/.*regexIface: '\(.*\)'/\1/p" "$SBX/rx/var/lib/rancher/rke2/server/manifests/jaa-canal-iface.yaml"; }
+RX="$(rx_of 10.1.16.0/20,172.16.5.0/24)"
+for ip in 10.1.16.1 10.1.31.254 172.16.5.9; do check "regex matches $ip" sh -c "echo $ip | grep -qE '$RX'"; done
+for ip in 10.1.15.1 10.1.32.1 172.16.50.9 10.0.2.15; do check "regex rejects $ip" sh -c "! echo $ip | grep -qE '$RX'"; done
+check "yaml quoting parses" python3 -c "import yaml,sys; d=yaml.safe_load(open('$SBX/rx/var/lib/rancher/rke2/server/manifests/jaa-canal-iface.yaml')); assert yaml.safe_load(d['spec']['valuesContent'])['flannel']['regexIface'].startswith('^10')"
+
 echo "== re-running setup keeps the cluster secret =="
 tok1="$(sed -n 's/^token: //p' "$CFG")"
 bash "$CLI" setup master --name jaa-master-ab12 --cidr 192.168.1.0/24 >/dev/null
@@ -61,6 +71,7 @@ bash "$CLI" join 192.168.1.10 "K10${H}::abcdef.0123456789abcdef" --name jaa-work
 check "config: server url"           has "$CFG" 'server: "https://192.168.1.10:9345"'
 check "config: pinned token"         has "$CFG" "token: \"K10${H}::abcdef.0123456789abcdef\""
 check "config: no node-ip unless asked" sh -c "! grep -q node-ip '$CFG'"
+check "no canal manifest on a worker" test ! -e "$SBX/var/lib/rancher/rke2/server/manifests/jaa-canal-iface.yaml"
 check "config: no tls-san on worker" sh -c "! grep -q tls-san '$CFG'"
 check "role recorded as agent"       has "$CONF" 'ROLE=agent'
 check "master address recorded"      has "$CONF" 'SERVER=https://192.168.1.10:9345'
@@ -96,6 +107,7 @@ bash "$CLI" setup none >/dev/null
 check "role recorded as none"        has "$CONF" 'ROLE=none'
 check "rke2 config removed"          test ! -e "$CFG"
 check "zram restored"                has "$ZRAM" '[zram0]'
+check "canal manifest removed"       test ! -e "$CANAL"
 check "sysctl drop-in removed"       test ! -e "$SBX/etc/sysctl.d/90-jaa-cluster.conf"
 check "fw: only flushes left"        sh -c "! grep -q 'add rule' '$NFT'"
 check "both services disabled"       sh -c "grep -q 'disable rke2-server' '$ACT' && grep -q 'disable rke2-agent' '$ACT'"

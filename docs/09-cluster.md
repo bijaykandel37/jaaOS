@@ -91,7 +91,9 @@ Recommendations:
 - Give the master a **fixed address** (DHCP reservation or static IP): workers store it.
 - On machines with **more than one network card**, tell RKE2 which address faces the cluster:
   `sudo jaa-cluster setup master --node-ip 192.168.1.10` (and `--node-ip` on `join` for workers).
-  Otherwise RKE2 uses the address of the default route.
+  Otherwise RKE2 uses the address of the default route. The master also pins canal's VXLAN
+  overlay (flannel) to "the NIC whose address is in the cluster LAN" on every node. Without
+  that, flannel picks the default-route NIC and pods on different nodes cannot reach each other.
 - For **HA**, add two more masters: `sudo jaa-cluster setup master --server <first-master> --token <its permanent token>`.
 - Use `sudo jaa-cluster kubeconfig` to get `kubectl` access as your own user (cluster-admin;
   keep it private). Root shells get `KUBECONFIG` automatically.
@@ -101,6 +103,8 @@ Recommendations:
 - `/etc/rancher/rke2/config.yaml` (0600): node name, token, `server:` (worker), and `cni: canal` +
   `tls-san: <name>, <name>.local` (master). Re-running keeps the existing cluster secret.
 - `/etc/nftables.d/jaa-cluster.nft`: the firewall rules above.
+- Master only: `/var/lib/rancher/rke2/server/manifests/jaa-canal-iface.yaml`, a `HelmChartConfig`
+  that sets canal's `flannel.regexIface` to an IP regex of the cluster LAN subnet(s).
 - `/etc/sysctl.d/90-jaa-cluster.conf` (`ip_forward`, `bridge-nf-call-iptables`, inotify
   limits), `/etc/modules-load.d/jaa-cluster.conf` (`br_netfilter`, `overlay`).
 - `/etc/NetworkManager/conf.d/90-jaa-rke2.conf`: NetworkManager ignores `cali*`/`flannel*`.
