@@ -65,6 +65,49 @@ cat > /etc/motd <<'EOF'
 
 EOF
 
+# --- desktop edition: boot straight into XFCE as `jaa` ---
+if [ "${JAA_EDITION:-lite}" = desktop ]; then
+	# Auto-login cannot handle the forced first-login password change the console edition uses,
+	# so the live desktop keeps the well-known password `jaa` (for sudo) without forcing a change.
+	# Acceptable for a live session only: SSH takes keys only, and nothing is kept after reboot.
+	# The installer always asks for real credentials.
+	chage -d "$(date -u -d "@${SOURCE_DATE_EPOCH:-0}" +%F)" jaa
+	install -d /etc/lightdm/lightdm.conf.d
+	cat > /etc/lightdm/lightdm.conf.d/50-jaa-live.conf <<'EOF'
+# jaaOS live desktop: log in automatically (installed systems show the normal login screen).
+[Seat:*]
+autologin-user=jaa
+autologin-user-timeout=0
+autologin-session=xfce
+user-session=xfce
+EOF
+	cat > /usr/share/applications/jaa-install.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Install jaaOS
+Comment=Install jaaOS to a disk (asks: Kubernetes master / worker / none)
+Exec=xfce4-terminal --title="Install jaaOS" --hold -x sudo jaa-install
+Icon=system-software-install
+Categories=System;
+EOF
+	cat > /usr/share/applications/jaa-keys.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=jaaOS keyboard shortcuts
+Comment=Shell shortcuts cheat sheet (Tab, Ctrl+R, Alt+S = sudo, ...)
+Exec=xfce4-terminal --title="jaaOS shortcuts" --geometry=82x34 --hold -x jaa-keys
+Icon=input-keyboard
+Categories=System;Utility;
+EOF
+	install -d -o jaa -g jaa /home/jaa/Desktop
+	for f in jaa-install jaa-keys xfce4-terminal firefox-esr; do
+		[ -f "/usr/share/applications/$f.desktop" ] || continue
+		install -m 0755 -o jaa -g jaa "/usr/share/applications/$f.desktop" "/home/jaa/Desktop/$f.desktop"
+	done
+	systemctl enable lightdm.service >/dev/null 2>&1 || true
+	systemctl set-default graphical.target >/dev/null
+fi
+
 # --- initramfs: zstd-compressed, rebuilt so it definitely contains the live-boot hooks ---
 sed -i 's/^COMPRESS=.*/COMPRESS=zstd/' /etc/initramfs-tools/initramfs.conf
 update-initramfs -u -k all

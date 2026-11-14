@@ -39,6 +39,7 @@ make image     # build out/jaaos-minimal.img (image step needs root)
 make vm        # boot it in QEMU (OVMF + swtpm)
 make live      # build the ~310 MB lite live ISO out/jaaos-lite.iso (root)
 make live-test # boot the ISO in QEMU (BIOS + UEFI) and wait for the login prompt
+make live-desktop # build the ~530 MB XFCE desktop live ISO out/jaaos-desktop.iso (root)
 make help      # list every entry point
 ```
 

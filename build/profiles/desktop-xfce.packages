@@ -1,0 +1,58 @@
+# jaaOS — XFCE desktop EXTRAS (installed on top of minimal or lite + cluster).
+# Used by the desktop live ISO (EDITION=desktop build/mklive.sh) and by the installer's
+# "desktop-xfce" profile. Chosen over GNOME (build/profiles/desktop.packages) for size and because
+# it stays responsive in VMs without GPU acceleration. Trade-off: X11 instead of Wayland, so
+# graphical apps are not isolated from each other the way Wayland isolates them.
+# mmdebstrap installs WITHOUT Recommends, so everything the session needs is listed.
+
+# --- display server + login screen ---
+xserver-xorg-core
+xserver-xorg-input-libinput
+# fallbacks for "safe graphics" (nomodeset) and GPUs without a kernel modesetting driver
+xserver-xorg-video-fbdev
+xserver-xorg-video-vesa
+x11-xserver-utils
+lightdm
+lightdm-gtk-greeter
+
+# --- XFCE session (the xfce4 metapackage = panel, wm, desktop, Thunar, settings, session) ---
+xfce4
+xfce4-terminal
+xfce4-notifyd
+xfce4-screensaver
+xfce4-power-manager
+xfce4-whiskermenu-plugin
+xfce4-taskmanager
+xfce4-screenshooter
+thunar-volman
+thunar-archive-plugin
+gvfs
+xarchiver
+mousepad
+ristretto
+
+# --- session plumbing: D-Bus user session, polkit agent (Wi-Fi/mounts), notifications ---
+dbus-user-session
+dbus-x11
+polkitd
+lxpolkit
+xdg-user-dirs
+upower
+
+# --- look: theme, icons, fonts (librsvg renders the SVG icons) ---
+greybird-gtk-theme
+adwaita-icon-theme
+librsvg2-common
+fonts-dejavu-core
+
+# --- network + sound ---
+network-manager-gnome
+pipewire-audio
+wireplumber
+pavucontrol
+
+# --- apps ---
+firefox-esr
+
+# --- VMs: clipboard sharing + automatic resize under QEMU/SPICE (tiny; harmless on hardware) ---
+spice-vdagent

@@ -32,8 +32,14 @@ vm: ## Boot out/jaaos-minimal.img in QEMU (OVMF + swtpm)
 live: ## Build the lite live ISO out/jaaos-lite.iso (root; FIRMWARE=1 adds WiFi/GPU firmware)
 	sudo FIRMWARE="$(FIRMWARE)" bash build/mklive.sh
 
+live-desktop: ## Build the XFCE desktop live ISO out/jaaos-desktop.iso (root; FIRMWARE=1 for real laptops)
+	sudo EDITION=desktop FIRMWARE="$(FIRMWARE)" bash build/mklive.sh
+
 live-test: ## Boot out/jaaos-lite.iso in QEMU (BIOS + UEFI) and wait for the login prompt
 	bash tests/vm/live-iso-boot.sh
+
+live-desktop-test: ## Boot out/jaaos-desktop.iso in QEMU (BIOS + UEFI) and wait for the login prompt
+	ISO=out/jaaos-desktop.iso bash tests/vm/live-iso-boot.sh
 
 release: ## Checksums + manifest + SBOM + signature over out/ artifacts (out/dist/)
 	bash build/release.sh
@@ -64,4 +70,4 @@ lint: ## bash -n + shellcheck every shell script
 clean: ## Remove build outputs (out/)
 	rm -rf out
 
-.PHONY: help deps keys keyring rootfs image vm live live-test release test rust rust-lint rust-test pam lint clean
+.PHONY: help deps keys keyring rootfs image vm live live-desktop live-test live-desktop-test release test rust rust-lint rust-test pam lint clean
