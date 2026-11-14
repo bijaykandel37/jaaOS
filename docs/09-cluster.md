@@ -135,30 +135,49 @@ By default nodes pull RKE2's system images from the internet on first start. Bui
 
 ## Tests
 
-- `tests/vm/cluster-test.sh` (in `make test`, no root): config, firewall, host tuning and service
-  actions for each role, plus refusal of hostile input (YAML/nft injection, bad CIDRs, names,
-  tokens, node IPs). The generated firewall rules also pass `nft -c` against the base ruleset
-  for all three roles.
-- **Two QEMU VMs booted from the ISO, on a shared virtual LAN** (software emulation, Haswell CPU
-  model). Master: `jaa-cluster setup master --node-ip …` → node Ready. Then `join-code` printed
-  the LAN address and fingerprint, and `announce` ran. Worker: `discover` found the master over
-  mDNS through both firewalls, with the same fingerprint. `jaa-cluster fingerprint` (as a normal
-  user) matched. A wrong fingerprint was refused. `join` with the code + fingerprint succeeded and
-  the worker registered with the master under a unique `jaa-worker-<mac>` name.
+- `tests/vm/cluster-test.sh` (in `make test`, no root, 64 checks): config, firewall, host tuning
+  and service actions for each role. It also checks refusal of hostile input (YAML/nft injection,
+  bad CIDRs, names, tokens, node IPs) and the flannel interface regex (matches in-range addresses,
+  rejects others, valid YAML). The generated firewall rules pass `nft -c` against the base
+  ruleset for all three roles.
+- **Two QEMU VMs booted from the ISO on a shared virtual LAN**, each with a second NAT NIC
+  (software emulation, Haswell CPU model). Verified on the unmodified ISO:
+  - Master `setup master --node-ip …` → node Ready.
+  - `join-code` printed the LAN address and fingerprint, and `announce` ran.
+  - The worker's `discover` found the master over mDNS through both firewalls.
+  - `jaa-cluster fingerprint` (as a normal user) matched, and a wrong fingerprint was refused.
+  - `join` succeeded under a unique `jaa-worker-<mac>` name.
+  - **Both nodes Ready, and canal 2/2 on both.**
 - Single VM: Docker started on demand (overlay2 on the live tmpfs) and ran `hello-world`. The
   shell shortcuts, `jaa-keys`, motd and firewall forwarding were checked. No failed units.
 
-This testing found and fixed four bugs. **The serious one:** the `nft` 1.1.1 inside RKE2's Calico
-container segfaults when it reads *any* named nftables set created by Debian's `nft` 1.1.3. The old
-`jaa_tcp_open` port set therefore stopped Calico from programming its rules, and pod networking
-never became ready on any node. `jaa_tcp_open` is now a chain of plain rules (same name, same
-behaviour for `jaa-host` and `jaa apply`). jaaOS's own ruleset must not use named sets. The other three: the fingerprint was computed over the CA with its
-trailing newline stripped (so every legitimate join would have been refused). `join-code`
-printed the default-route address instead of the cluster `--node-ip`. And `jaa-cluster` was not
-on a normal user's PATH.
+This testing found and fixed five bugs:
+1. **The serious one:** the `nft` 1.1.1 inside RKE2's Calico container segfaults when it reads
+   *any* named nftables set created by Debian's `nft` 1.1.3. The old `jaa_tcp_open` port set
+   therefore stopped Calico from programming its rules, and pod networking never became ready.
+   `jaa_tcp_open` is now a chain of plain rules (same name, same behaviour for `jaa-host` and
+   `jaa apply`). jaaOS's own ruleset must not use named sets.
+2. The fingerprint was computed over the CA with its trailing newline stripped, so every
+   legitimate join would have been refused.
+3. `join-code` printed the default-route address instead of the cluster `--node-ip`.
+4. `jaa-cluster` was not on a normal user's PATH.
+5. **Multi-NIC nodes:** flannel put the VXLAN tunnel on the default-route NIC, so a pod on the
+   worker could not reach CoreDNS on the master. The firewall dropped nothing; the tunnel was
+   simply on the wrong NIC. Fixed by the master's `jaa-canal-iface.yaml` (see above).
 
 ## Limits (honest)
 
+- **Cross-node pod traffic has not been seen working yet.** The flannel-interface fix (bug 5) is
+  covered by the sandbox tests, and the API server accepted it in the VM. But the emulated
+  master's control plane was too CPU-starved (load ~40, controller-manager crash-looping) to
+  re-run the canal install that applies it. Verify on real hardware or KVM, as root on the
+  master (it runs a lookup from a pod on the first worker):
+
+  ```bash
+  W=$(kubectl get nodes --no-headers | awk '$3 !~ /control-plane/ {print $1; exit}'); kubectl run dnstest --rm -i --restart=Never --image=busybox:1.36 --overrides="{\"spec\":{\"nodeName\":\"$W\"}}" -- nslookup kubernetes.default.svc.cluster.local
+  ```
+
+  Single-NIC machines (the normal case) never needed the fix.
 - Tested in emulated VMs only, not on real hardware. **The installer's role step has not been
   run end to end** (it needs a real or virtual disk install; the same `jaa-cluster` code it
   calls is what the VM tests exercised).
