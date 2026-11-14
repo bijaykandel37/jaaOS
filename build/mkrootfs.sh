@@ -59,8 +59,9 @@ trap 'rm -f "$KR_STAGE"' EXIT
 # Comma-separated include list from the profile file: drop comments, strip whitespace WITHIN each
 # line (but keep line breaks), drop blank lines, then join with commas. (Using `tr -d` here would
 # also delete the newlines and mash every package name into one invalid token.)
+# minimal + cluster (Docker, mDNS discovery, shell tools) — every jaaOS system gets both.
 PKGS="$(sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' "$ROOT/build/profiles/minimal.packages" \
-	| paste -sd, -)"
+	"$ROOT/build/profiles/cluster.packages" | sort -u | paste -sd, -)"
 
 echo "Building rootfs: suite=$SUITE arch=$ARCH snapshot=$SNAPSHOT"
 echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"

@@ -39,7 +39,7 @@ Engines: `site` → **nginx** (default) or **caddy** (`--engine caddy`, auto-TLS
 - **Validate:** `nginx -t`, `caddy validate`, `haproxy -c -f`, `keepalived -t` before any reload.
 - **Reload (zero-downtime):** `systemctl reload` (nginx graceful; haproxy seamless `-sf`; caddy
   `caddy reload`; traefik watches its dynamic dir; keepalived reload). Restart only as fallback.
-- **Firewall:** the port is added live with `nft add element inet filter jaa_tcp_open { N }`
+- **Firewall:** the port is added live with `nft add rule inet filter jaa_tcp_open tcp dport N ct state new accept`
   and persisted to `/etc/nftables.d/jaa-host.nft` (included by the Phase-1 `nftables.conf`),
   so it survives reboot.
 - **Monitoring:** a Prometheus **file_sd** target is written to

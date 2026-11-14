@@ -1,0 +1,7 @@
+# Pinned RKE2 release bundled into jaaOS (read by build/fetch-rke2.sh; parsed, never sourced).
+# To upgrade: pick a release from https://github.com/rancher/rke2/releases, download its
+# sha256sum-amd64.txt, check it against the release page, and update both lines.
+RKE2_VERSION=v1.36.6+rke2r1
+# SHA-256 of that release's sha256sum-amd64.txt. Every downloaded asset is checked against the
+# hashes inside it, so this one pin covers the binary tarball and the optional air-gap images.
+RKE2_SHA256SUMS_SHA256=2a9ae019e47798ab98691f26b2b588a68ca2387cc6c3c3c50efd32b89ac21980

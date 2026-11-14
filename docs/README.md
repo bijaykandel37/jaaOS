@@ -12,6 +12,7 @@ Read in order; each phase doc ends with acceptance criteria and known limitation
 | [05-phase4-hosting.md](05-phase4-hosting.md) | Hosting & load-balancing CLI (`jaa-host`): nginx/Caddy sites, HAProxy/Traefik LBs, keepalived HA, firewall + monitoring integration. |
 | [06-phase5-monitoring.md](06-phase5-monitoring.md) | Self-monitoring stack: Prometheus/Alertmanager/Loki/Alloy/Grafana/Falco + `jaa-health`, lite/full modes, the monitoring deniability rules (R-MON). |
 | [07-phase6-vapt.md](07-phase6-vapt.md) | VAPT toolkit `jaa-scan`: engagement files, the scope gate, containerized assessment profiles, audit — authorized-testing-only. |
+| [09-cluster.md](09-cluster.md) | Docker + RKE2 built in; master/worker/none at install; how masters and workers find and trust each other (mDNS + join code + CA fingerprint); cluster firewall. |
 | [08-phase7-release.md](08-phase7-release.md) | CI, signed reproducible releases, `jaa-update` (snapshot rollback), declarative `jaa diff`/`apply`, first Rust port; lite live ISO (boots in QEMU) + Cockpit scaffold. |
 | [decisions/](decisions/) | ADRs: [0001 base distribution](decisions/0001-base-distribution.md), [0002 implementation language](decisions/0002-implementation-language.md). |
 

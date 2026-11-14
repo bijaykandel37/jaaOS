@@ -31,7 +31,7 @@ jobs:
       - name: Run sandbox test suites (no root, no network)
         run: |
           set -e
-          for t in hosting monitoring vapt update system-toml release; do
+          for t in hosting monitoring vapt update system-toml release cluster; do
             echo "::group::$t-test.sh"
             bash "tests/vm/$t-test.sh"
             echo "::endgroup::"

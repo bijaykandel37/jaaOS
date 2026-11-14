@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# jaa-keys — keyboard shortcut cheat sheet for the jaaOS shell.
+set -euo pipefail
+cat <<'EOF'
+jaaOS shell shortcuts
+─────────────────────────────────────────────────────────────────────────
+ Moving                          Editing
+  Ctrl+A / Home   start of line   Ctrl+U        delete to start of line
+  Ctrl+E / End    end of line     Ctrl+K        delete to end of line
+  Ctrl+← / Alt+B  word left       Ctrl+W        delete word before cursor
+  Ctrl+→ / Alt+F  word right      Ctrl+Del      delete word after cursor
+  Ctrl+XX         jump start/here Ctrl+Y        paste what you deleted
+                                  Ctrl+_        undo
+                                  Alt+S         put "sudo " in front
+                                  Alt+K         put "kubectl " in front
+                                  Ctrl+X Ctrl+E edit the line in $EDITOR
+ Completion                      History
+  Tab        complete / list      ↑ / ↓        previous command starting
+  Shift+Tab  cycle matches                      with what you typed
+  **<Tab>    fuzzy file picker    Ctrl+R       fuzzy history search (fzf)
+                                  Alt+.        last argument of previous cmd
+ fzf                              !!           repeat last command
+  Ctrl+T     insert a file path   please       re-run last command with sudo
+  Alt+C      cd into a directory
+ Screen / jobs                   Aliases
+  Ctrl+L     clear screen         k, kgp, kgn, kgs, kd, kl, kex   kubectl
+  Ctrl+C     cancel               dps, dpa, di, dl, dex, dc        docker
+  Ctrl+D     exit shell           ll, la, .., ..., ports, myip
+  Ctrl+Z     suspend (fg resumes)
+─────────────────────────────────────────────────────────────────────────
+ Cluster: jaa-cluster status | join-code | announce | discover | join
+EOF

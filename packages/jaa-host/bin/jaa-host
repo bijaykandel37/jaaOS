@@ -55,13 +55,22 @@ read_state() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1; }
 open_port() { # <port>
 	local port="$1" f; f="$(p "$NFT_MANAGED")"
 	mkdir -p "$(dirname "$f")"; touch "$f"
-	grep -qF "{ $port }" "$f" 2>/dev/null || echo "add element inet filter jaa_tcp_open { $port }" >> "$f"
-	[ -n "$PREFIX" ] || nft add element inet filter jaa_tcp_open "{ $port }" 2>/dev/null || true
+	# One rule per port in the jaa_tcp_open chain (a chain, not a set: see /etc/nftables.conf).
+	local rule="tcp dport $port ct state new accept"
+	grep -qF "jaa_tcp_open $rule" "$f" 2>/dev/null || echo "add rule inet filter jaa_tcp_open $rule" >> "$f"
+	[ -n "$PREFIX" ] || nft list chain inet filter jaa_tcp_open 2>/dev/null | grep -qF "$rule" \
+		|| nft add rule inet filter jaa_tcp_open tcp dport "$port" ct state new accept 2>/dev/null || true
 }
 close_port() { # <port>
 	local port="$1" f; f="$(p "$NFT_MANAGED")"
-	[ -f "$f" ] && sed -i "/{ $port }/d" "$f"
-	[ -n "$PREFIX" ] || nft delete element inet filter jaa_tcp_open "{ $port }" 2>/dev/null || true
+	[ -f "$f" ] && sed -i "/jaa_tcp_open tcp dport $port ct state new accept\$/d" "$f"
+	if [ -z "$PREFIX" ]; then
+		local h
+		for h in $(nft -a list chain inet filter jaa_tcp_open 2>/dev/null \
+			| sed -n "s/.*tcp dport $port ct state new accept # handle \([0-9]*\)\$/\1/p"); do
+			nft delete rule inet filter jaa_tcp_open handle "$h" 2>/dev/null || true
+		done
+	fi
 }
 
 register_monitor() { # <name> <host> <port> [path]

@@ -1,0 +1,22 @@
+# jaaOS — container + Kubernetes base, installed on EVERY jaaOS system (live ISO, disk image,
+# every installer profile). All from Debian main, so Debian's security updates cover them.
+# RKE2 itself is not in Debian: it is the pinned upstream release from build/rke2.lock
+# (fetched + hash-checked by build/fetch-rke2.sh) and is installed but DISABLED until a role is
+# chosen with `jaa-cluster setup master|worker` (the installer asks).
+
+# Docker Engine (socket-activated: starts on first `docker` command, not at boot)
+docker.io
+docker-cli
+docker-compose
+iptables
+
+# Master/worker discovery on the LAN (mDNS). avahi-daemon is disabled at boot and only runs
+# while `jaa-cluster announce` / `discover` is running.
+avahi-daemon
+avahi-utils
+
+# Shell comfort: fuzzy history/file search (Ctrl+R, Ctrl+T, Alt+C), JSON for kubectl output
+fzf
+jq
+bash-completion
+curl

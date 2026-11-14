@@ -1,0 +1,520 @@
+#!/usr/bin/env bash
+# jaa-cluster — choose this machine's RKE2 role and join workers to a master
+# (prototype / behavioural spec; Rust port target: crates/jaa-cluster, ADR 0002).
+#
+#   sudo jaa-cluster setup master                    # this machine runs the control plane
+#   sudo jaa-cluster join-code                       # on the master: short code for workers
+#   sudo jaa-cluster announce                        # on the master: show up in LAN discovery
+#   sudo jaa-cluster discover                        # on a worker: list masters on this LAN
+#   sudo jaa-cluster join 192.168.1.10 abcdef.0123456789abcdef
+#   sudo jaa-cluster setup none                      # no Kubernetes on this machine
+#
+# "master" = RKE2 server, "worker" = RKE2 agent. The join code is a Kubernetes bootstrap token
+# (expires, default 2h). A worker pins the master's cluster CA: it shows the CA fingerprint and
+# only joins when you confirm it matches the one printed on the master, so a fake "master" on
+# the LAN cannot take over the join.
+set -euo pipefail
+
+CONF=/etc/jaa/cluster.conf
+RKE2_CFG=/etc/rancher/rke2/config.yaml
+NFT_DROPIN=/etc/nftables.d/jaa-cluster.nft
+SYSCTL_F=/etc/sysctl.d/90-jaa-cluster.conf
+MODULES_F=/etc/modules-load.d/jaa-cluster.conf
+NM_F=/etc/NetworkManager/conf.d/90-jaa-rke2.conf
+ZRAM_F=/etc/systemd/zram-generator.conf
+NODE_TOKEN=/var/lib/rancher/rke2/server/node-token
+IMAGES_SRC="${JAA_RKE2_IMAGES:-/usr/share/jaaos/rke2/images}"
+RKE2=/usr/local/bin/rke2
+SVC_TYPE=_jaa-rke2._tcp
+JOIN_PORT=9345
+
+# JAA_CLUSTER_PREFIX: tests write into a sandbox and record service actions, nothing live.
+# --root DIR: configure an installed system that is not running (the installer's target).
+PREFIX="${JAA_CLUSTER_PREFIX:-}"
+ROOTDIR=""
+
+die()  { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARN: $*" >&2; }
+have() { command -v "$1" >/dev/null 2>&1; }
+p()    { printf '%s' "${PREFIX:-$ROOTDIR}$1"; }
+live() { [ -z "$PREFIX" ] && [ -z "$ROOTDIR" ]; }
+need_root() { live || return 0; [ "$(id -u)" -eq 0 ] || die "run with sudo"; }
+
+# ---- input validation: every value reaches YAML, nft or a URL, so check it first --------
+valid_name()  { [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; }
+valid_ipv4()  { [[ "$1" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+	local o; for o in "${BASH_REMATCH[@]:1}"; do [ "$o" -le 255 ] || return 1; done; }
+valid_host()  { valid_ipv4 "$1" || { [ "${#1}" -le 253 ] && [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] && [[ "$1" != *..* ]]; }; }
+valid_cidrs() {
+	local c addr len; IFS=',' read -ra _c <<<"$1"; [ "${#_c[@]}" -gt 0 ] || return 1
+	for c in "${_c[@]}"; do
+		[[ "$c" =~ ^([0-9.]+)/([0-9]{1,2})$ ]] || return 1
+		addr="${BASH_REMATCH[1]}"; len="${BASH_REMATCH[2]}"   # copy before valid_ipv4 reuses BASH_REMATCH
+		valid_ipv4 "$addr" && [ "$len" -le 32 ] || return 1
+	done
+}
+valid_code()  { [[ "$1" =~ ^[a-z0-9]{6}\.[a-z0-9]{16}$ ]]; }
+valid_k10()   { [[ "$1" =~ ^K10[0-9a-f]{64}::([a-z0-9]{6}\.[a-z0-9]{16}|server:[A-Za-z0-9]{8,128}|node:[A-Za-z0-9]{8,128})$ ]]; }
+valid_secret(){ [[ "$1" =~ ^[A-Za-z0-9]{16,128}$ ]]; }
+valid_ttl()   { [[ "$1" =~ ^[1-9][0-9]{0,3}[mh]$ ]]; }
+
+norm_role() {
+	case "${1:-}" in
+		master|server) echo server ;;
+		worker|agent)  echo agent ;;
+		none)          echo none ;;
+		*) die "role must be master, worker or none" ;;
+	esac
+}
+role_label() { case "$1" in server) echo master;; agent) echo worker;; *) echo none;; esac; }
+
+# Parse one KEY=value from a file without sourcing it.
+conf_get() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1 || true; }
+
+svc() { # systemctl wrapper: live, offline target (--root), or recorded (tests)
+	if [ -n "$PREFIX" ]; then echo "systemctl $*" >> "$PREFIX/.jaa-cluster-actions"; return 0; fi
+	if [ -n "$ROOTDIR" ]; then systemctl --root="$ROOTDIR" "$@" >/dev/null 2>&1 || warn "systemctl --root $* failed"; return 0; fi
+	systemctl "$@"
+}
+
+primary_ip() { ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1; }
+
+# Directly connected IPv4 networks, minus container/overlay bridges: the "LAN" the cluster
+# ports are opened to.
+detect_cidrs() {
+	ip -4 -o route show scope link proto kernel 2>/dev/null \
+		| awk '$1 ~ /\// && $3 !~ /^(docker0|br-|cni0|flannel|cali|virbr|vxlan)/ {print $1}' \
+		| sort -u | paste -sd, -
+}
+
+mac4() {
+	local n
+	for n in /sys/class/net/*; do
+		case "${n##*/}" in lo|docker*|br-*|cni*|flannel*|cali*|veth*|virbr*) continue;; esac
+		[ -r "$n/address" ] && { tr -d ':\n' < "$n/address" | tail -c 4; return; }
+	done
+	echo 0000
+}
+
+default_name() { # <role>
+	local cur
+	cur="$(cat "$(p /etc/hostname)" 2>/dev/null || hostname 2>/dev/null || true)"
+	case "$cur" in ""|jaa|localhost|debian) echo "jaa-$(role_label "$1")-$(mac4)";; *) echo "$cur";; esac
+}
+
+fp_pretty() { printf '%s' "$1" | cut -c1-16 | sed 's/..../& /g; s/ $//'; }
+
+ca_hash_remote() { # <host> <port> -> sha256 of the CA bundle the server presents
+	# Hash the EXACT bytes, as RKE2 does for the K10 token. (Do not capture with $(...): it strips
+	# the PEM's trailing newline and gives a different hash.) -k is fine here: nothing is trusted
+	# yet — the hash is what the user compares against the master's screen.
+	local f h
+	f="$(mktemp)" || return 1
+	if curl -sk --max-time 10 -o "$f" "https://$1:$2/cacerts" && grep -q 'BEGIN CERTIFICATE' "$f"; then
+		h="$(sha256sum "$f" | cut -d' ' -f1)"
+	fi
+	rm -f "$f"
+	[ -n "${h:-}" ] && echo "$h"
+}
+
+ca_hash_local() { sed -n 's/^K10\([0-9a-f]\{64\}\)::.*/\1/p' "$NODE_TOKEN" 2>/dev/null | head -1 || true; }
+
+# ---- generated files ----------------------------------------------------------------------
+write_file() { # <path> <mode>  (content on stdin)
+	local f; f="$(p "$1")"; mkdir -p "$(dirname "$f")"
+	cat > "$f.tmp"; chmod "$2" "$f.tmp"; mv "$f.tmp" "$f"
+}
+
+write_firewall() { # <role> <cidrs>
+	local role="$1" cidrs="$2" tcp
+	{
+		echo "# Managed by jaa-cluster (role: $(role_label "$role")). Rebuilt by 'jaa-cluster firewall'; do not edit."
+		echo "# Cluster ports are open only to: ${cidrs:-<none>}"
+		echo "flush chain inet filter jaa_cluster_in"
+		echo "flush chain inet filter jaa_cluster_fwd"
+		if [ "$role" != none ]; then
+			if [ "$role" = server ]; then tcp="6443, 9345, 2379-2381, 10250"; else tcp="10250"; fi
+			if [ -n "$cidrs" ]; then
+				echo "add rule inet filter jaa_cluster_in ip saddr { $cidrs } tcp dport { $tcp } accept"
+				echo "add rule inet filter jaa_cluster_in ip saddr { $cidrs } tcp dport 30000-32767 accept"
+				echo "add rule inet filter jaa_cluster_in ip saddr { $cidrs } udp dport { 5353, 8472 } accept"
+			fi
+			# Pod and overlay interfaces (canal = calico veths + flannel VXLAN).
+			for ifc in 'cali*' flannel.1 cni0; do
+				echo "add rule inet filter jaa_cluster_in iifname \"$ifc\" accept"
+				echo "add rule inet filter jaa_cluster_fwd iifname \"$ifc\" accept"
+				echo "add rule inet filter jaa_cluster_fwd oifname \"$ifc\" accept"
+			done
+		fi
+	} | write_file "$NFT_DROPIN" 0644
+}
+
+write_rke2_config() { # <role> <name> <server-url> <token> [node-ip]
+	local role="$1" name="$2" url="$3" token="$4" nodeip="${5:-}"
+	{
+		echo "# Managed by jaa-cluster — role: $(role_label "$role"). Re-run 'jaa-cluster setup' to change."
+		echo "node-name: \"$name\""
+		if [ -n "$url" ]; then echo "server: \"$url\""; fi
+		if [ -n "$nodeip" ]; then echo "node-ip: \"$nodeip\""; fi
+		echo "token: \"$token\""
+		if [ "$role" = server ]; then
+			echo "write-kubeconfig-mode: \"0600\""
+			echo "cni: canal"
+			echo "tls-san:"
+			echo "  - \"$name\""
+			echo "  - \"$name.local\""
+		fi
+	} | write_file "$RKE2_CFG" 0600
+}
+
+write_host_tuning() {
+	write_file "$SYSCTL_F" 0644 <<'EOF'
+# Managed by jaa-cluster: kernel settings Kubernetes networking needs.
+net.ipv4.ip_forward = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+fs.inotify.max_user_instances = 8192
+fs.inotify.max_user_watches = 524288
+EOF
+	printf '# Managed by jaa-cluster\nbr_netfilter\noverlay\n' | write_file "$MODULES_F" 0644
+	write_file "$NM_F" 0644 <<'EOF'
+# Managed by jaa-cluster: NetworkManager must not touch the CNI interfaces RKE2 creates.
+[keyfile]
+unmanaged-devices=interface-name:cali*;interface-name:flannel*;interface-name:cni0;interface-name:vxlan*
+EOF
+	# The kubelet refuses to start while swap is on, and zram is swap.
+	local z; z="$(p "$ZRAM_F")"
+	if [ -f "$z" ] && [ ! -f "$z.jaa-orig" ] && grep -q '^\[zram' "$z"; then cp -p "$z" "$z.jaa-orig"; fi
+	printf '# Disabled by jaa-cluster: the kubelet refuses to run with swap on.\n# "jaa-cluster setup none" restores the original (%s.jaa-orig).\n' "$ZRAM_F" \
+		| write_file "$ZRAM_F" 0644
+}
+
+remove_host_tuning() {
+	rm -f "$(p "$SYSCTL_F")" "$(p "$MODULES_F")" "$(p "$NM_F")" "$(p "$RKE2_CFG")"
+	local z; z="$(p "$ZRAM_F")"
+	[ -f "$z.jaa-orig" ] && mv "$z.jaa-orig" "$z"
+	return 0
+}
+
+set_hostname() { # <name>
+	local name="$1" hosts
+	printf '%s\n' "$name" | write_file /etc/hostname 0644
+	hosts="$(p /etc/hosts)"
+	if [ -f "$hosts" ]; then
+		if grep -q '^127\.0\.1\.1' "$hosts"; then sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t$name/" "$hosts"
+		else printf '127.0.1.1\t%s\n' "$name" >> "$hosts"; fi
+	fi
+	if live; then hostname "$name" 2>/dev/null || true; fi
+}
+
+stage_images() { # air-gap images bundled on the ISO (AIRGAP=1 builds) -> agent image dir
+	[ -d "$IMAGES_SRC" ] || return 0
+	ls "$IMAGES_SRC"/*.tar.zst >/dev/null 2>&1 || return 0
+	local dst; dst="$(p /var/lib/rancher/rke2/agent/images)"; mkdir -p "$dst"
+	local f
+	for f in "$IMAGES_SRC"/*.tar.zst; do
+		if live; then ln -sf "$f" "$dst/"; else cp "$f" "$dst/"; fi
+	done
+	echo "staged air-gap images into /var/lib/rancher/rke2/agent/images"
+}
+
+apply_live() { # <role>  — make the new state effective on the running system
+	local role="$1"
+	nft -f "$NFT_DROPIN" || warn "could not load $NFT_DROPIN (is nftables running?)"
+	if [ "$role" != none ]; then
+		modprobe br_netfilter 2>/dev/null || true; modprobe overlay 2>/dev/null || true
+		sysctl -q -p "$SYSCTL_F" || warn "some sysctls in $SYSCTL_F did not apply"
+		swapoff /dev/zram0 2>/dev/null || true
+		systemctl stop systemd-zram-setup@zram0.service 2>/dev/null || true
+	fi
+	if have nmcli; then nmcli general reload conf 2>/dev/null || true; fi
+}
+
+# ---- commands --------------------------------------------------------------------------
+cmd_setup() {
+	[ $# -ge 1 ] || die "usage: jaa-cluster setup master|worker|none [--server HOST[:PORT]] [--token TOKEN] [--name NAME] [--cidr CIDR[,CIDR]] [--node-ip IP] [--root DIR] [--no-start]"
+	local role; role="$(norm_role "$1")"; shift
+	local server="" token="" name="" cidrs="" nodeip="" start=1
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--server) server="${2:-}"; shift 2 ;;
+			--token)  token="${2:-}"; shift 2 ;;
+			--name)   name="${2:-}"; shift 2 ;;
+			--cidr)   cidrs="${2:-}"; shift 2 ;;
+			--node-ip) nodeip="${2:-}"; shift 2 ;;
+			--root)   ROOTDIR="${2:-}"; shift 2; [ -d "$ROOTDIR" ] || die "--root: not a directory" ;;
+			--no-start) start=0; shift ;;
+			*) die "unknown option: $1" ;;
+		esac
+	done
+	need_root
+
+	if [ "$role" = none ]; then
+		write_firewall none ""
+		remove_host_tuning
+		svc disable rke2-server.service 2>/dev/null || true
+		svc disable rke2-agent.service 2>/dev/null || true
+		printf 'ROLE=none\n' | write_file "$CONF" 0644
+		if live; then
+			systemctl stop rke2-server.service rke2-agent.service 2>/dev/null || true
+			apply_live none
+		fi
+		echo "Kubernetes role: none. RKE2 is installed but disabled; Docker is still available."
+		return 0
+	fi
+
+	[ -x "$(p "$RKE2")" ] || [ -n "$PREFIX" ] || die "RKE2 is not installed at $RKE2"
+	[ -z "$nodeip" ] || valid_ipv4 "$nodeip" || die "bad --node-ip: $nodeip"
+	[ -n "$name" ] || name="$(default_name "$role")"
+	valid_name "$name" || die "node name must be lowercase letters, digits and '-' (got: $name)"
+	[ -n "$cidrs" ] || cidrs="$(detect_cidrs)"
+	if [ -n "$cidrs" ]; then valid_cidrs "$cidrs" || die "bad --cidr: $cidrs"
+	else warn "no LAN subnet detected: cluster ports stay closed until you run 'jaa-cluster firewall --cidr ...'"; fi
+
+	local url=""
+	if [ -n "$server" ]; then
+		local host="${server%:*}" port="${server##*:}"
+		[ "$host" != "$server" ] || port=$JOIN_PORT
+		valid_host "$host" || die "bad --server host: $host"
+		[[ "$port" =~ ^[0-9]{1,5}$ ]] && [ "$port" -le 65535 ] || die "bad --server port: $port"
+		url="https://$host:$port"
+	fi
+
+	if [ "$role" = agent ]; then
+		[ -n "$url" ] || die "a worker needs --server (the master's address)"
+		[ -n "$token" ] || die "a worker needs --token (use 'jaa-cluster join', which builds it from a join code)"
+	fi
+	if [ -n "$token" ]; then
+		valid_k10 "$token" || valid_secret "$token" || die "token format not recognised"
+		valid_k10 "$token" || warn "token does not pin the master's CA (no K10 prefix); prefer 'jaa-cluster join' with a join code"
+	elif [ "$role" = server ]; then
+		# Keep an existing cluster secret: changing it would lock this master out of its own datastore.
+		token="$(sed -n 's/^token: "\(.*\)"$/\1/p' "$(p "$RKE2_CFG")" 2>/dev/null | head -1 || true)"
+		[ -n "$token" ] || token="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"   # 40 hex chars
+	fi
+
+	write_rke2_config "$role" "$name" "$url" "$token" "$nodeip"
+	write_firewall "$role" "$cidrs"
+	write_host_tuning
+	set_hostname "$name"
+	stage_images
+	{
+		printf 'ROLE=%s\nNAME=%s\nCIDR=%s\n' "$role" "$name" "$cidrs"
+		if [ -n "$url" ]; then printf 'SERVER=%s\n' "$url"; fi
+		if [ -n "$nodeip" ]; then printf 'NODE_IP=%s\n' "$nodeip"; fi
+	} | write_file "$CONF" 0644
+
+	local other=agent; [ "$role" = agent ] && other=server
+	svc disable "rke2-$other.service" 2>/dev/null || true
+	svc enable "rke2-$role.service"
+
+	echo "Kubernetes role: $(role_label "$role") (RKE2 $role) — node name '$name'"
+	echo "Cluster ports open to: ${cidrs:-nobody yet}"
+	if live; then
+		if [ "$start" = 1 ]; then
+			systemctl stop "rke2-$other.service" 2>/dev/null || true
+			apply_live "$role"
+			echo "Starting rke2-$role (first start pulls images; allow a few minutes)…"
+			systemctl start --no-block "rke2-$role.service"
+		else
+			apply_live "$role"
+		fi
+	else
+		echo "rke2-$role will start on first boot."
+	fi
+	if [ "$role" = server ]; then
+		echo
+		echo "Next, on this master once it is up (check: sudo jaa-cluster status):"
+		echo "  sudo jaa-cluster join-code     # short code + fingerprint for workers"
+		echo "  sudo jaa-cluster announce      # let workers find this master on the LAN"
+	fi
+}
+
+cmd_join_code() {
+	local ttl=2h
+	while [ $# -gt 0 ]; do case "$1" in --ttl) ttl="${2:-}"; shift 2;; *) die "unknown option: $1";; esac; done
+	valid_ttl "$ttl" || die "--ttl like 30m or 2h"
+	need_root
+	[ "$(conf_get "$CONF" ROLE)" = server ] || die "this machine is not a master (jaa-cluster setup master)"
+	[ -s "$NODE_TOKEN" ] || die "rke2-server is not ready yet — wait, then retry (sudo jaa-cluster status)"
+	local code hash ip name
+	local out
+	out="$("$RKE2" token create --ttl "$ttl" --description "jaa-cluster join code" 2>&1 | tail -1 || true)"
+	# rke2 prints K10<ca-hash>::<id>.<secret>; workers only need to type the <id>.<secret> part.
+	code="${out##*::}"
+	valid_code "$code" || die "could not create a join code: $out"
+	hash="$(ca_hash_local)"; [ -n "$hash" ] || die "cannot read the cluster CA hash from $NODE_TOKEN"
+	[[ "$out" != K10* ]] || [ "$out" = "K10${hash}::${code}" ] || die "rke2 reported a different CA hash than $NODE_TOKEN"
+	# The address workers must use: the cluster-facing --node-ip if one was set, else the default route's.
+	ip="$(conf_get "$CONF" NODE_IP)"; [ -n "$ip" ] || ip="$(primary_ip)"
+	name="$(conf_get "$CONF" NAME)"
+	cat <<EOF
+
+  Master:       ${ip:-?}  ($name)
+  Join code:    $code      (valid $ttl, usable by any number of workers)
+  Fingerprint:  $(fp_pretty "$hash")
+
+On each worker run:
+  sudo jaa-cluster join ${ip:-<master-ip>} $code
+or pick "worker" in the installer and choose this master from the list.
+The worker shows a fingerprint: it must match the one above.
+
+EOF
+}
+
+cmd_token() {
+	need_root
+	[ -s "$NODE_TOKEN" ] || die "no server token yet (is this a running master?)"
+	warn "this is the PERMANENT cluster token; prefer 'jaa-cluster join-code' (expires)"
+	cat "$NODE_TOKEN"
+}
+
+cmd_fingerprint() { # <host[:port]> [--pretty]
+	[ $# -ge 1 ] || die "usage: jaa-cluster fingerprint HOST[:PORT] [--pretty]"
+	local host="${1%:*}" port="${1##*:}" h
+	[ "$host" != "$1" ] || port=$JOIN_PORT
+	valid_host "$host" || die "bad host: $host"
+	h="$(ca_hash_remote "$host" "$port")" || die "no RKE2 master answering at $host:$port"
+	if [ "${2:-}" = --pretty ]; then fp_pretty "$h"; echo; else echo "$h"; fi
+}
+
+cmd_join() { # <host[:port]> <code|K10-token> [--fingerprint FP] [--name N] [--cidr C]
+	[ $# -ge 2 ] || die "usage: jaa-cluster join MASTER-IP JOIN-CODE [--fingerprint XXXX...] [--name NAME]"
+	local server="$1" secret="$2"; shift 2
+	local expect="" extra=()
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--fingerprint) expect="$(printf '%s' "${2:-}" | tr -d ' :' | tr 'A-F' 'a-f')"; shift 2 ;;
+			--name|--cidr|--node-ip) extra+=("$1" "${2:-}"); shift 2 ;;
+			*) die "unknown option: $1" ;;
+		esac
+	done
+	need_root
+	local host="${server%:*}" port="${server##*:}" token
+	[ "$host" != "$server" ] || port=$JOIN_PORT
+	valid_host "$host" || die "bad master address: $host"
+	if valid_k10 "$secret"; then
+		token="$secret"
+	elif valid_code "$secret"; then
+		local hash; hash="$(ca_hash_remote "$host" "$port")" || die "no RKE2 master answering at $host:$port"
+		echo "Master CA fingerprint: $(fp_pretty "$hash")"
+		if [ -n "$expect" ]; then
+			[ "${#expect}" -ge 16 ] && [[ "$hash" == "$expect"* ]] || die "fingerprint does not match — refusing to join"
+		else
+			local ans; read -r -p "Does it match the fingerprint shown on the master? [y/N] " ans
+			[[ "$ans" =~ ^[Yy] ]] || die "not confirmed — refusing to join"
+		fi
+		token="K10${hash}::${secret}"
+	else
+		die "expected a join code like abcdef.0123456789abcdef (run 'sudo jaa-cluster join-code' on the master)"
+	fi
+	cmd_setup worker --server "$host:$port" --token "$token" "${extra[@]}"
+}
+
+firewall_open_mdns() { # temporary 5353/udp rule for discovery; prints its handle
+	nft -e -a add rule inet filter jaa_cluster_in udp dport 5353 accept comment '"jaa-discover"' 2>/dev/null \
+		| sed -n 's/.*# handle \([0-9]*\).*/\1/p' | head -1
+}
+
+cmd_discover() {
+	local secs=6
+	while [ $# -gt 0 ]; do case "$1" in --seconds) secs="${2:-}"; shift 2;; *) die "unknown option: $1";; esac; done
+	[[ "$secs" =~ ^[1-9][0-9]?$ ]] || die "--seconds 1-99"
+	need_root
+	have avahi-browse || die "avahi-utils is not installed"
+	local started=0 handle=""
+	systemctl is-active --quiet avahi-daemon.service || { systemctl start avahi-daemon.service; started=1; }
+	handle="$(firewall_open_mdns || true)"
+	# shellcheck disable=SC2064
+	trap "[ -n '$handle' ] && nft delete rule inet filter jaa_cluster_in handle '$handle' 2>/dev/null; [ $started = 1 ] && systemctl stop avahi-daemon.service avahi-daemon.socket 2>/dev/null; true" EXIT
+	timeout "$secs" avahi-browse -rp "$SVC_TYPE" 2>/dev/null \
+		| awk -F';' '$1=="=" && $3=="IPv4" {fp=$10; sub(/.*"fp=/,"",fp); sub(/".*/,"",fp); print $4"\t"$8"\t"$9"\t"fp}' \
+		| sort -u || true
+}
+
+cmd_announce() {
+	local mins=30
+	while [ $# -gt 0 ]; do case "$1" in --minutes) mins="${2:-}"; shift 2;; *) die "unknown option: $1";; esac; done
+	[[ "$mins" =~ ^[1-9][0-9]{0,2}$ ]] || die "--minutes 1-999"
+	need_root
+	[ "$(conf_get "$CONF" ROLE)" = server ] || die "only a master announces itself"
+	have avahi-publish || die "avahi-utils is not installed"
+	local name hash
+	name="$(conf_get "$CONF" NAME)"; hash="$(ca_hash_local)"
+	[ -n "$hash" ] || die "rke2-server is not ready yet — wait, then retry"
+	systemctl start avahi-daemon.service
+	trap 'systemctl stop avahi-daemon.service avahi-daemon.socket 2>/dev/null || true' EXIT
+	echo "Announcing master '$name' on the LAN for $mins minutes (Ctrl+C to stop)."
+	echo "Workers see fingerprint $(fp_pretty "$hash"). The join code is NOT broadcast."
+	timeout "${mins}m" avahi-publish -s "$name" "$SVC_TYPE" "$JOIN_PORT" "jaaos=1" "fp=${hash:0:16}" || true
+}
+
+cmd_firewall() {
+	local cidrs=""
+	while [ $# -gt 0 ]; do case "$1" in --cidr) cidrs="${2:-}"; shift 2;; *) die "unknown option: $1";; esac; done
+	need_root
+	local role; role="$(conf_get "$(p "$CONF")" ROLE)"; role="${role:-none}"
+	[ -n "$cidrs" ] || cidrs="$(detect_cidrs)"
+	[ -z "$cidrs" ] || valid_cidrs "$cidrs" || die "bad --cidr: $cidrs"
+	write_firewall "$role" "$cidrs"
+	sed -i "s#^CIDR=.*#CIDR=$cidrs#" "$(p "$CONF")" 2>/dev/null || true
+	live && nft -f "$NFT_DROPIN"
+	echo "cluster ports ($(role_label "$role")) open to: ${cidrs:-nobody}"
+}
+
+cmd_status() {
+	local role; role="$(conf_get "$CONF" ROLE)"; role="${role:-none}"
+	echo "role:   $(role_label "$role")"
+	[ "$role" = none ] && return 0
+	echo "name:   $(conf_get "$CONF" NAME)"
+	echo "lan:    $(conf_get "$CONF" CIDR)"
+	[ "$role" = agent ] && echo "master: $(conf_get "$CONF" SERVER)"
+	echo "rke2:   $(systemctl is-active "rke2-$role.service" 2>/dev/null || true)"
+	if [ "$role" = server ] && [ -r /etc/rancher/rke2/rke2.yaml ] && [ -x /var/lib/rancher/rke2/bin/kubectl ]; then
+		/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get nodes -o wide 2>/dev/null || true
+	fi
+}
+
+cmd_kubeconfig() { # copy the admin kubeconfig to the invoking user's ~/.kube/config
+	need_root
+	local u="${SUDO_USER:-root}" home
+	[ -r /etc/rancher/rke2/rke2.yaml ] || die "no kubeconfig yet (only on a running master)"
+	home="$(getent passwd "$u" | cut -d: -f6)"; [ -n "$home" ] || die "unknown user $u"
+	install -d -m 0700 -o "$u" -g "$u" "$home/.kube"
+	install -m 0600 -o "$u" -g "$u" /etc/rancher/rke2/rke2.yaml "$home/.kube/config"
+	echo "wrote $home/.kube/config — this is cluster-admin access; keep it private"
+}
+
+usage() {
+	cat <<'EOF'
+jaa-cluster — RKE2 role for this machine (master / worker / none)
+
+  setup master|worker|none [--server HOST[:PORT]] [--token T] [--name N] [--cidr C] [--node-ip IP] [--root DIR] [--no-start]
+                                                     (--node-ip: the cluster-facing address on multi-NIC machines)
+  join MASTER-IP JOIN-CODE [--fingerprint XXXX...]   worker: join a master (checks its CA fingerprint)
+  join-code [--ttl 2h]                               master: create a short-lived join code
+  announce [--minutes 30]                            master: be discoverable on the LAN (mDNS)
+  discover [--seconds 6]                             list masters announcing on this LAN
+  fingerprint HOST[:PORT] [--pretty]                 show a master's cluster-CA fingerprint
+  firewall [--cidr C]                                re-open cluster ports to the LAN (after it changed)
+  kubeconfig                                         copy the admin kubeconfig to your ~/.kube/config
+  token                                              master: print the permanent cluster token
+  status                                             role, service state, nodes
+EOF
+}
+
+cmd="${1:-help}"; [ $# -gt 0 ] && shift
+case "$cmd" in
+	setup)       cmd_setup "$@" ;;
+	join)        cmd_join "$@" ;;
+	join-code)   cmd_join_code "$@" ;;
+	announce)    cmd_announce "$@" ;;
+	discover)    cmd_discover "$@" ;;
+	fingerprint) cmd_fingerprint "$@" ;;
+	firewall)    cmd_firewall "$@" ;;
+	kubeconfig)  cmd_kubeconfig "$@" ;;
+	token)       cmd_token "$@" ;;
+	status)      cmd_status "$@" ;;
+	help|-h|--help) usage ;;
+	*) usage >&2; exit 2 ;;
+esac

@@ -52,8 +52,8 @@ has "$f" "virtual_ipaddress" && has "$f" "10.0.0.10/24" && ok "keepalived VIP pr
 has "$f" "state MASTER" && ok "keepalived state MASTER" || no "keepalived state MASTER"
 
 echo "== firewall + monitoring side-effects =="
-has "$SBX/etc/nftables.d/jaa-host.nft" "jaa_tcp_open { 80 }" && ok "port 80 opened" || no "port 80 opened"
-has "$SBX/etc/nftables.d/jaa-host.nft" "jaa_tcp_open { 8080 }" && ok "lb port 8080 opened" || no "lb port 8080 opened"
+has "$SBX/etc/nftables.d/jaa-host.nft" "jaa_tcp_open tcp dport 80 ct state new accept" && ok "port 80 opened" || no "port 80 opened"
+has "$SBX/etc/nftables.d/jaa-host.nft" "jaa_tcp_open tcp dport 8080 ct state new accept" && ok "lb port 8080 opened" || no "lb port 8080 opened"
 [ -f "$SBX/etc/jaa/monitoring/targets.d/site-demo.local.json" ] && ok "monitoring target for site" || no "monitoring target for site"
 has "$SBX/etc/jaa/monitoring/targets.d/lb-app-lb.json" '"__metrics_path__":"/healthz"' && ok "lb monitoring target + health path" || no "lb monitoring target + health path"
 

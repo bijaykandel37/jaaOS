@@ -1,5 +1,6 @@
 # jaaOS — LITE profile (Debian 13 "trixie", amd64). Used by build/mklive.sh for the live ISO.
 # Goal: a small, console-first jaaOS that boots from USB/ISO on BIOS and UEFI machines.
+# build/mklive.sh also installs build/profiles/cluster.packages (Docker, mDNS, fzf) on top.
 # One package per line; # starts a comment. mmdebstrap installs WITHOUT Recommends, so every
 # runtime need is listed explicitly.
 #
@@ -49,6 +50,12 @@ curl
 # --- hardening ---
 apparmor
 auditd
+
+# --- installer (sudo jaa-install): partitioning + base system download ---
+gdisk
+parted
+mmdebstrap
+whiptail
 
 # --- base userland ---
 sudo

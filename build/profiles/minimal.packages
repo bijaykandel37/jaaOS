@@ -36,6 +36,7 @@ cryptsetup-initramfs
 tpm2-tools
 efibootmgr
 sbsigntool
+openssl
 dosfstools
 initramfs-tools
 

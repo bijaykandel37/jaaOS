@@ -1,0 +1,43 @@
+# jaaOS key bindings for bash (readline). Loaded by /etc/jaa/shell/bashrc with `bind -f`.
+# Standard bash shortcuts (Ctrl+A, Ctrl+E, Ctrl+R, Tab…) keep working; this adds to them.
+# Run `jaa-keys` for the full cheat sheet.
+$include /etc/inputrc
+
+# --- Tab completion ---
+set completion-ignore-case on          # Tab: "doc<Tab>" also finds "Documents"
+set completion-map-case on             # treat - and _ as the same when completing
+set show-all-if-ambiguous on           # one Tab lists all matches (not two)
+set mark-symlinked-directories on
+set colored-stats on                   # colour matches by file type
+set colored-completion-prefix on
+set visible-stats on
+set skip-completed-text on
+set bell-style none
+
+# Shift+Tab: cycle through the matches one by one
+"\e[Z": menu-complete
+
+# --- history: Up/Down search for commands starting with what you already typed ---
+"\e[A": history-search-backward
+"\e[B": history-search-forward
+"\eOA": history-search-backward
+"\eOB": history-search-forward
+
+# --- move / delete by word with Ctrl+arrows and Ctrl+Delete ---
+"\e[1;5C": forward-word
+"\e[1;5D": backward-word
+"\e[5C": forward-word
+"\e[5D": backward-word
+"\e[3;5~": kill-word
+
+# --- Home / End / Delete on every terminal (the Linux console sends different codes) ---
+"\e[1~": beginning-of-line
+"\e[4~": end-of-line
+"\e[H": beginning-of-line
+"\e[F": end-of-line
+"\e[3~": delete-char
+
+# Alt+S: put "sudo " in front of the current line
+"\es": "\C-asudo \C-e"
+# Alt+K: put "kubectl " in front of the current line
+"\ek": "\C-akubectl \C-e"

@@ -26,6 +26,16 @@ cat > /etc/hosts <<'EOF'
 ::1		localhost ip6-localhost ip6-loopback
 EOF
 
+# --- shell: jaaOS key bindings, completion, aliases (config/rootfs/etc/jaa/shell) ---
+# Sourced as the LAST line of each ~/.bashrc so it wins over Debian's stock settings.
+# /etc/skel covers users created later (installer, useradd -m).
+JAA_RC='[ -r /etc/jaa/shell/bashrc ] && . /etc/jaa/shell/bashrc   # jaaOS shell defaults'
+for rc in /etc/skel/.bashrc /root/.bashrc; do
+	[ -f "$rc" ] || continue
+	grep -qF '/etc/jaa/shell/bashrc' "$rc" || printf '\n%s\n' "$JAA_RC" >> "$rc"
+done
+if [ -f /usr/local/bin/jaa-keys ]; then chmod 0755 /usr/local/bin/jaa-keys; fi
+
 # --- default user ---
 # The prebuilt image ships ONE console account, `jaa`, with a well-known demo password that
 # MUST be changed on first login (enforced below). root stays LOCKED (no password) — logging
@@ -59,6 +69,15 @@ for unit in ssh nftables auditd apparmor systemd-timesyncd systemd-resolved \
 	systemctl enable "$unit" >/dev/null 2>&1 || echo "10-customize.sh: skip $unit (not installed)"
 done
 systemctl mask ctrl-alt-del.target >/dev/null 2>&1 || true
+
+# Docker is socket-activated: nothing runs at boot, the first `docker` command starts it.
+# Debian's containerd.service is only Docker's backend (RKE2 brings its own), so it starts
+# with Docker instead of at boot. avahi (mDNS) only runs during `jaa-cluster announce/discover`.
+if [ -e /usr/lib/systemd/system/docker.socket ] || [ -e /lib/systemd/system/docker.socket ]; then
+	systemctl disable docker.service containerd.service >/dev/null 2>&1 || true
+	systemctl enable docker.socket >/dev/null 2>&1 || true
+fi
+systemctl disable avahi-daemon.service avahi-daemon.socket >/dev/null 2>&1 || true
 
 # resolved: point /etc/resolv.conf at the stub
 ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf 2>/dev/null || true
