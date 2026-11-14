@@ -5,7 +5,7 @@
 #   sudo build/mkimage.sh
 #
 # Env overrides:
-#   IMG_SIZE=12G            image size
+#   IMG_SIZE=4G             image size (sparse file; the installer uses the whole real disk)
 #   LUKS_PASSPHRASE=jaa demo FDE passphrase (CHANGE for anything real)
 #   CMDLINE=kernel/cmdline  which kernel cmdline to bake into the UKI
 set -euo pipefail
@@ -18,7 +18,7 @@ ROOTFS_TAR="$OUT/rootfs.tar"
 IMG="$OUT/jaaos-minimal.img"
 KEYS="$ROOT/build/secureboot/keys"
 CMDLINE_FILE="${CMDLINE:-$ROOT/kernel/cmdline}"
-IMG_SIZE="${IMG_SIZE:-12G}"
+IMG_SIZE="${IMG_SIZE:-4G}"
 LUKS_PASSPHRASE="${LUKS_PASSPHRASE:-jaa}"
 MAPPER="jaa_root"
 MOUNTOPTS="compress=zstd:1,noatime,space_cache=v2"

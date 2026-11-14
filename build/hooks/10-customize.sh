@@ -52,9 +52,12 @@ fi
 
 # --- services: enable what the minimal profile needs, mask what it does not ---
 # NetworkManager gives wired + WiFi out of the box; bluetooth brings up the BlueZ stack.
-systemctl enable ssh nftables auditd apparmor \
-	systemd-timesyncd systemd-resolved snapper-cleanup.timer \
-	NetworkManager bluetooth >/dev/null 2>&1 || true
+# One unit at a time: a unit missing from a smaller profile (e.g. lite has no snapper/bluez)
+# must not stop the others from being enabled.
+for unit in ssh nftables auditd apparmor systemd-timesyncd systemd-resolved \
+	snapper-cleanup.timer NetworkManager bluetooth; do
+	systemctl enable "$unit" >/dev/null 2>&1 || echo "10-customize.sh: skip $unit (not installed)"
+done
 systemctl mask ctrl-alt-del.target >/dev/null 2>&1 || true
 
 # resolved: point /etc/resolv.conf at the stub

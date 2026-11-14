@@ -44,6 +44,7 @@ snapper
 
 # --- networking ---
 iproute2
+netbase
 iputils-ping
 nftables
 openssh-server

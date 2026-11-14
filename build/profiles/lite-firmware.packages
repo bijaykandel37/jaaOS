@@ -1,0 +1,14 @@
+# jaaOS — optional firmware add-on for the LITE live ISO (build/mklive.sh with FIRMWARE=1).
+# Adds WiFi/Bluetooth/GPU/NIC firmware and CPU microcode for real hardware. This roughly
+# doubles the ISO size; VMs need none of it.
+amd64-microcode
+intel-microcode
+firmware-linux-free
+firmware-misc-nonfree
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-brcm80211
+wireless-regdb
+iw
+rfkill

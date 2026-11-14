@@ -1,6 +1,7 @@
 # jaaOS top-level entry points. Run `make help`.
 SHELL := bash
 .DEFAULT_GOAL := help
+FIRMWARE ?= 0
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -8,6 +9,7 @@ help: ## Show this help
 
 deps: ## Install host build/test dependencies (Debian/Ubuntu)
 	sudo apt update && sudo apt install -y \
+	  squashfs-tools xorriso grub-common grub-pc-bin grub-efi-amd64-bin mtools \
 	  mmdebstrap uidmap debian-archive-keyring gdisk cryptsetup-bin btrfs-progs dosfstools \
 	  sbsigntool efitools openssl uuid-runtime \
 	  qemu-system-x86 qemu-utils ovmf swtpm shellcheck
@@ -27,8 +29,11 @@ image: ## Build the encrypted, signed, bootable image (image step needs root)
 vm: ## Boot out/jaaos-minimal.img in QEMU (OVMF + swtpm)
 	bash tests/vm/run-qemu.sh
 
-live: ## Build a live ISO from out/rootfs.tar (Phase 7 scaffold; not yet boot-tested)
-	bash build/mklive.sh
+live: ## Build the lite live ISO out/jaaos-lite.iso (root; FIRMWARE=1 adds WiFi/GPU firmware)
+	sudo FIRMWARE="$(FIRMWARE)" bash build/mklive.sh
+
+live-test: ## Boot out/jaaos-lite.iso in QEMU (BIOS + UEFI) and wait for the login prompt
+	bash tests/vm/live-iso-boot.sh
 
 release: ## Checksums + manifest + SBOM + signature over out/ artifacts (out/dist/)
 	bash build/release.sh
@@ -59,4 +64,4 @@ lint: ## bash -n + shellcheck every shell script
 clean: ## Remove build outputs (out/)
 	rm -rf out
 
-.PHONY: help deps keys keyring rootfs image vm live release test rust rust-lint rust-test pam lint clean
+.PHONY: help deps keys keyring rootfs image vm live live-test release test rust rust-lint rust-test pam lint clean
