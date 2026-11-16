@@ -25,8 +25,9 @@ fi
 SUITE="${SUITE:-trixie}"
 SNAPSHOT="${SNAPSHOT:-20261001T000000Z}"
 COMPONENTS="main contrib non-free-firmware"
-MIRROR="http://snapshot.debian.org/archive/debian/${SNAPSHOT}"
-SECMIRROR="http://snapshot.debian.org/archive/debian-security/${SNAPSHOT}"
+MIRROR="${MIRROR:-https://snapshot.debian.org/archive/debian/${SNAPSHOT}}"
+SECMIRROR="${SECMIRROR:-https://snapshot.debian.org/archive/debian-security/${SNAPSHOT}}"
+JC="$DATA/packages/jaa-cluster/bin/jaa-cluster"
 MAPPER=jaa_root
 MOUNTOPTS="compress=zstd:1,noatime,space_cache=v2"
 LUKS_ARGS=(--type luks2 --pbkdf argon2id --pbkdf-memory 1048576 --pbkdf-force-iterations 4
@@ -35,6 +36,18 @@ LUKS_ARGS=(--type luks2 --pbkdf argon2id --pbkdf-memory 1048576 --pbkdf-force-it
 die() { echo "ERROR: $*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 part() { case "$1" in *[0-9]) echo "${1}p${2}";; *) echo "${1}${2}";; esac; }
+# One package per line -> comma list. Strip whitespace WITHIN lines only: deleting newlines
+# (tr -d '[:space:]') would glue every name into one invalid token.
+pkglist() { sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' "$@" | paste -sd, -; }
+mac4() {
+	local n
+	for n in /sys/class/net/*; do
+		case "${n##*/}" in lo|docker*|br-*|cni*|flannel*|cali*|veth*|virbr*) continue;; esac
+		[ -r "$n/address" ] && { tr -d ':\n' < "$n/address" | tail -c 4; return; }
+	done
+	echo 0000
+}
+fp4() { printf '%s' "$1" | cut -c1-16 | sed 's/..../& /g; s/ $//'; }
 
 [ "$(id -u)" -eq 0 ] || die "run as root"
 # jaaOS requires UEFI on real hardware. JAA_ALLOW_NO_UEFI=1 relaxes this for the
@@ -63,7 +76,31 @@ else
 		server "Minimal + containers + monitoring base" \
 		desktop "GNOME desktop (Wayland)" \
 		security-lab "Desktop + VAPT container tooling" 3>&1 1>&2 2>&3)" || exit 1
-	HOSTNAME="$(whiptail --inputbox "Hostname" 8 50 jaa 3>&1 1>&2 2>&3)" || exit 1
+	CLUSTER_ROLE="$(whiptail --title "Kubernetes (RKE2)" --menu "What is this machine in a Kubernetes cluster?\nDocker is installed in every case." 15 74 3 \
+		none   "Not part of a cluster" \
+		master "Master: the control plane of a new cluster" \
+		worker "Worker: join an existing master" 3>&1 1>&2 2>&3)" || exit 1
+	if [ "$CLUSTER_ROLE" = worker ]; then
+		whiptail --infobox "Looking for jaaOS masters on this network (6 s)..." 7 56
+		mapfile -t FOUND < <(bash "$JC" discover --seconds 6 2>/dev/null || true)
+		menu=()
+		for f in "${FOUND[@]}"; do
+			IFS=$'\t' read -r m_name m_ip m_port m_fp <<<"$f"
+			menu+=("$m_ip:$m_port" "$m_name   fingerprint $(fp4 "$m_fp")")
+		done
+		menu+=(manual "Type the master's address")
+		CLUSTER_SERVER="$(whiptail --title "Master" --menu "Masters announcing on this network (on the master: sudo jaa-cluster announce):" 18 76 8 "${menu[@]}" 3>&1 1>&2 2>&3)" || exit 1
+		if [ "$CLUSTER_SERVER" = manual ]; then
+			CLUSTER_SERVER="$(whiptail --inputbox "Master IP address or hostname" 8 60 3>&1 1>&2 2>&3)" || exit 1
+		fi
+		CLUSTER_JOIN_CODE="$(whiptail --inputbox "Join code (on the master: sudo jaa-cluster join-code)\nIt looks like: abcdef.0123456789abcdef" 10 66 3>&1 1>&2 2>&3)" || exit 1
+		m_hash="$(bash "$JC" fingerprint "$CLUSTER_SERVER")" || die "no RKE2 master answering at $CLUSTER_SERVER"
+		whiptail --title "Check the master" --yesno "Master fingerprint:\n\n      $(fp4 "$m_hash")\n\nDoes it match the fingerprint 'jaa-cluster join-code' printed on the master?\nIf not, choose No: something else is answering at that address." 14 70 \
+			|| die "fingerprint not confirmed — not joining"
+		CLUSTER_FINGERPRINT="$m_hash"
+	fi
+	case "$CLUSTER_ROLE" in master|worker) def_host="jaa-$CLUSTER_ROLE-$(mac4)";; *) def_host=jaa;; esac
+	HOSTNAME="$(whiptail --inputbox "Hostname (every cluster node needs a unique one)" 8 60 "$def_host" 3>&1 1>&2 2>&3)" || exit 1
 	USERNAME="$(whiptail --inputbox "Username" 8 50 admin 3>&1 1>&2 2>&3)" || exit 1
 	USER_PW="$(whiptail --passwordbox "Login password (unlocks your home environment)" 8 60 3>&1 1>&2 2>&3)" || exit 1
 	FDE_PW="$(whiptail --passwordbox "Disk-encryption passphrase (asked at boot)" 8 60 3>&1 1>&2 2>&3)" || exit 1
@@ -75,6 +112,23 @@ fi
 
 : "${TARGET_DISK:?}"; : "${PROFILE:?}"; : "${HOSTNAME:?}"; : "${USERNAME:?}"
 : "${USER_PW:?}"; : "${FDE_PW:?}"; : "${DUAL_ENV:=no}"; : "${TPM2:=no}"; : "${TPM2_PIN:=}"
+: "${CLUSTER_ROLE:=none}"; : "${CLUSTER_SERVER:=}"; : "${CLUSTER_JOIN_CODE:=}"; : "${CLUSTER_FINGERPRINT:=}"; : "${CLUSTER_TOKEN:=}"
+case "$CLUSTER_ROLE" in none|master|worker) ;; *) die "CLUSTER_ROLE must be none, master or worker";; esac
+if [ "$CLUSTER_ROLE" != none ]; then
+	HOSTNAME="${HOSTNAME,,}"   # Kubernetes node names are lowercase
+	[[ "$HOSTNAME" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || die "cluster node hostname must be letters, digits and '-' (got: $HOSTNAME)"
+fi
+if [ "$CLUSTER_ROLE" = worker ]; then
+	[ -n "$CLUSTER_SERVER" ] || die "a worker needs CLUSTER_SERVER (the master's address)"
+	if [ -z "$CLUSTER_TOKEN" ]; then
+		[ -n "$CLUSTER_JOIN_CODE" ] || die "a worker needs CLUSTER_JOIN_CODE (sudo jaa-cluster join-code on the master)"
+		fp="$(printf '%s' "$CLUSTER_FINGERPRINT" | tr -d ' :' | tr 'A-F' 'a-f')"
+		[ "${#fp}" -ge 16 ] || die "CLUSTER_FINGERPRINT must hold at least the 16 hex digits jaa-cluster join-code prints"
+		m_hash="$(bash "$JC" fingerprint "$CLUSTER_SERVER")" || die "no RKE2 master answering at $CLUSTER_SERVER"
+		[[ "$m_hash" == "$fp"* ]] || die "master fingerprint $(fp4 "$m_hash") does not match CLUSTER_FINGERPRINT — refusing"
+		CLUSTER_TOKEN="K10${m_hash}::${CLUSTER_JOIN_CODE}"
+	fi
+fi
 [ -b "$TARGET_DISK" ] || die "not a block device: $TARGET_DISK"
 [ -f "$DATA/build/profiles/${PROFILE}.packages" ] || [ "$PROFILE" = minimal ] || die "unknown profile: $PROFILE"
 
@@ -126,16 +180,14 @@ mount "$ESP_DEV" "$MNT/boot/efi"
 
 # ---------------------------------------------------------------- base system
 echo "==> Installing base system (mmdebstrap) — this downloads packages"
-PKGS="$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$DATA/build/profiles/minimal.packages" | tr -d '[:space:]' | paste -sd, -)"
+# Every profile = minimal + cluster (Docker, mDNS, shell tools) + the profile's extras.
+PROFILE_FILES=("$DATA/build/profiles/minimal.packages" "$DATA/build/profiles/cluster.packages")
 if [ "$PROFILE" != minimal ] && [ -f "$DATA/build/profiles/${PROFILE}.packages" ]; then
-	EXTRA="$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$DATA/build/profiles/${PROFILE}.packages" | tr -d '[:space:]' | paste -sd, -)"
-	PKGS="$PKGS,$EXTRA"
+	PROFILE_FILES+=("$DATA/build/profiles/${PROFILE}.packages")
 	# Security Lab builds on top of Desktop.
-	if [ "$PROFILE" = security-lab ]; then
-		DEX="$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$DATA/build/profiles/desktop.packages" | tr -d '[:space:]' | paste -sd, -)"
-		PKGS="$PKGS,$DEX"
-	fi
+	[ "$PROFILE" = security-lab ] && PROFILE_FILES+=("$DATA/build/profiles/desktop.packages")
 fi
+PKGS="$(pkglist "${PROFILE_FILES[@]}")"
 mmdebstrap --variant=minbase --architectures=amd64 --components="$COMPONENTS" \
 	--include="$PKGS" --aptopt='Acquire::Check-Valid-Until "false";' \
 	--customize-hook="sync-in '$DATA/config/rootfs' /" \
@@ -174,6 +226,7 @@ chroot "$MNT" /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root DEBI
 	/bin/bash -euo pipefail <<'CHROOT'
 KVER="$(ls -1 /boot/vmlinuz-* | sort -V | tail -n1)"; KVER="${KVER#/boot/vmlinuz-}"
 echo "$HOSTNAME" > /etc/hostname
+sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t$HOSTNAME/" /etc/hosts
 
 # Secure Boot keys owned by this machine; sign the UKI + bootloader.
 KEYS=/var/lib/jaaos/secureboot; mkdir -p "$KEYS"
@@ -217,6 +270,25 @@ fi
 echo "bootloader + user configured for $KVER"
 CHROOT
 
+# ---------------------------------------------------------------- Docker + RKE2 role
+RKE2_VER="$(sed -n 's/^RKE2_VERSION=//p' "$DATA/build/rke2.lock")"
+echo "==> RKE2 $RKE2_VER (role: $CLUSTER_ROLE)"
+if [ -x /usr/local/bin/rke2 ] && [ -f /usr/local/lib/systemd/system/rke2-server.service ]; then
+	# Booted from the jaaOS ISO: copy the RKE2 that ships on it (no download).
+	tar -C /usr/local -cf - bin/rke2 bin/rke2-killall.sh bin/rke2-uninstall.sh \
+		lib/systemd/system/rke2-server.service lib/systemd/system/rke2-server.env \
+		lib/systemd/system/rke2-agent.service lib/systemd/system/rke2-agent.env share/rke2 \
+		| tar -C "$MNT/usr/local" -xf -
+else
+	RKE2_DIR="$(bash "$DATA/build/fetch-rke2.sh" | tail -1)"
+	tar -C "$MNT/usr/local" -xzf "$RKE2_DIR/rke2.linux-amd64.tar.gz"
+fi
+install -Dm755 "$JC" "$MNT/usr/bin/jaa-cluster"
+JC_ARGS=(setup "$CLUSTER_ROLE" --root "$MNT")
+[ "$CLUSTER_ROLE" != none ] && JC_ARGS+=(--name "$HOSTNAME")
+[ "$CLUSTER_ROLE" = worker ] && JC_ARGS+=(--server "$CLUSTER_SERVER" --token "$CLUSTER_TOKEN")
+bash "$JC" "${JC_ARGS[@]}"
+
 # ---------------------------------------------------------------- dual-env (declarable only)
 if [ "$DUAL_ENV" = yes ]; then
 	echo "==> Setting up the declarable home environment (hidden envs are added later)"
@@ -252,3 +324,8 @@ echo
 echo "jaaOS install complete on $TARGET_DISK."
 echo "Enroll your Secure Boot keys (/var/lib/jaaos/secureboot/db.crt) via firmware Setup Mode,"
 echo "then reboot. Add a hidden environment later with:  sudo jaa-env add"
+case "$CLUSTER_ROLE" in
+	master) echo "Kubernetes: this is a MASTER. After it boots:  sudo jaa-cluster join-code  and  sudo jaa-cluster announce";;
+	worker) echo "Kubernetes: this WORKER joins $CLUSTER_SERVER on first boot (check: sudo jaa-cluster status)";;
+	*)      echo "Kubernetes: none (Docker only). Change later with:  sudo jaa-cluster setup master|worker";;
+esac

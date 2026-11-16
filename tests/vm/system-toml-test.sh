@@ -31,17 +31,16 @@ printf '%s' "$a" | grep -q "jaa install server" && ok "profile install planned" 
 printf '%s' "$a" | grep -q "apt-get install -y git" && ok "package install planned" || no "package install planned"
 printf '%s' "$a" | grep -q "systemctl enable --now ssh" && ok "service enable planned" || no "service enable planned"
 printf '%s' "$a" | grep -q "systemctl disable --now avahi-daemon" && ok "service disable planned" || no "service disable planned"
-printf '%s' "$a" | grep -q "jaa_tcp_open { 443 }" && ok "port open planned" || no "port open planned"
+printf '%s' "$a" | grep -q "jaa_tcp_open tcp dport 443 ct state new accept" && ok "port open planned" || no "port open planned"
 printf '%s' "$a" | grep -q "dry-run: nothing executed" && ok "states nothing executed" || no "states nothing executed"
 
 echo "== satisfied items are not re-applied =="
 # Mark everything as already installed/enabled and port 443 open -> plan should shrink.
-echo 'add element inet filter jaa_tcp_open { 443 }' > "$SBX/etc_nft" 2>/dev/null || true
-mkdir -p "$SBX/etc/nftables.d"; echo 'add element inet filter jaa_tcp_open { 22 }' > "$SBX/etc/nftables.d/jaa-host.nft"
+mkdir -p "$SBX/etc/nftables.d"; echo 'add rule inet filter jaa_tcp_open tcp dport 22 ct state new accept' > "$SBX/etc/nftables.d/jaa-host.nft"
 a2="$(JAA_FAKE_INSTALLED='git tmux jq' JAA_FAKE_ENABLED='ssh nftables auditd' bash "$CLI" apply --dry-run 2>&1)"
 printf '%s' "$a2" | grep -q "apt-get install -y git" && no "installed pkg should be skipped" || ok "installed pkg skipped"
 printf '%s' "$a2" | grep -q "enable --now ssh" && no "enabled svc should be skipped" || ok "enabled svc skipped"
-printf '%s' "$a2" | grep -q "{ 22 }" && no "already-open port 22 should be skipped" || ok "already-open port skipped"
+printf '%s' "$a2" | grep -q "dport 22 ct" && no "already-open port 22 should be skipped" || ok "already-open port skipped"
 printf '%s' "$a2" | grep -q "disable --now avahi-daemon" && no "avahi off now, skip disable" || ok "avahi disable skipped when off"
 
 echo "== apply --dry-run succeeds with exit 0 (regression) =="

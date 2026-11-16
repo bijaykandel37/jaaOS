@@ -39,7 +39,7 @@ release: ## Checksums + manifest + SBOM + signature over out/ artifacts (out/dis
 	bash build/release.sh
 
 test: ## Run the sandboxed test suites (no root, no VM)
-	@for t in hosting monitoring vapt update release system-toml; do \
+	@for t in hosting monitoring vapt update release system-toml cluster; do \
 	  echo "== $$t =="; bash tests/vm/$$t-test.sh || exit 1; done
 
 rust: ## Build all Rust crates in release mode

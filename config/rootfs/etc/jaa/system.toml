@@ -16,5 +16,5 @@ enable  = ["ssh", "nftables", "auditd"]
 disable = ["avahi-daemon"]
 
 [firewall]
-# TCP ports to keep open (added to the Phase-1 nftables jaa_tcp_open set).
+# TCP ports to keep open (one rule each in the nftables jaa_tcp_open chain).
 tcp = [22, 80, 443]

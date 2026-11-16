@@ -42,8 +42,28 @@ Components: main contrib non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
 
-# --- fstab: the live root is live-boot's overlay, nothing to mount ---
-echo "# jaaOS live: / is an overlay over the squashfs (live-boot); no static mounts." > /etc/fstab
+# --- fstab: / is live-boot's overlay. Container storage cannot sit on an overlay (Docker's
+# overlay2 and RKE2's containerd snapshotter need a real upper filesystem), so it goes in RAM.
+cat > /etc/fstab <<'EOF'
+# jaaOS live: / is an overlay over the squashfs (live-boot). Container storage lives in RAM.
+tmpfs /var/lib/docker     tmpfs mode=0710 0 0
+tmpfs /var/lib/containerd tmpfs mode=0711 0 0
+tmpfs /var/lib/rancher    tmpfs mode=0755 0 0
+tmpfs /var/lib/kubelet    tmpfs mode=0750 0 0
+EOF
+mkdir -p /var/lib/docker /var/lib/containerd /var/lib/rancher /var/lib/kubelet
+
+# --- login message for the live session ---
+cat > /etc/motd <<'EOF'
+
+  jaaOS lite (live). Nothing you change here is kept after a reboot.
+
+    sudo jaa-install             install to a disk (asks: Kubernetes master / worker / none)
+    sudo jaa-cluster setup ...   try an RKE2 master or worker right here (needs 8 GB RAM)
+    docker run --rm hello-world  Docker is built in (starts on first use)
+    jaa-keys                     keyboard shortcuts (Tab, Ctrl+R, Alt+S = sudo, ...)
+
+EOF
 
 # --- initramfs: zstd-compressed, rebuilt so it definitely contains the live-boot hooks ---
 sed -i 's/^COMPRESS=.*/COMPRESS=zstd/' /etc/initramfs-tools/initramfs.conf

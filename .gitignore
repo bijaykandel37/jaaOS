@@ -17,3 +17,6 @@ overlay-repo/keys/
 
 # Fetched Debian archive keyring (reproduced by build/fetch-keyring.sh)
 build/keyrings/
+
+# Downloaded RKE2 release (reproduced by build/fetch-rke2.sh)
+build/cache/

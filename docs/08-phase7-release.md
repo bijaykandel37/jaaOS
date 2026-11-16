@@ -16,7 +16,7 @@ the Cockpit plugin is a **scaffold**. The **lite live ISO is built and boot-test
 | Update | `jaa-update` — snapshot-bracketed `apply`/`rollback` | **tested** (`update-test.sh`, dry-run) |
 | Declarative | `jaa diff`/`apply` over `/etc/jaa/system.toml` | **tested** (`system-toml-test.sh`) |
 | Rust port | `jaa-core::scope` — IPv4/scope logic ported from `jaa-scan`, with unit tests | written; compiles+tests in CI (no toolchain here) |
-| Live ISO | `build/mklive.sh` + `build/profiles/lite.packages` — ~190 MB hybrid BIOS/UEFI ISO | **built + booted to login in QEMU** (`tests/vm/live-iso-boot.sh`); not yet on real hardware |
+| Live ISO | `build/mklive.sh` + `build/profiles/{lite,cluster}.packages` — ~310 MB hybrid BIOS/UEFI ISO with Docker, RKE2 and the `jaa-install` installer | **built + booted to login in QEMU** (`tests/vm/live-iso-boot.sh`); not yet on real hardware |
 | Cockpit | `installer/cockpit/jaa/` (optional web UI) | **scaffold**, not audited |
 
 ## CI (the point of "GitHub + cloud Claude Code")
@@ -89,7 +89,7 @@ console-first live system that boots from a DVD or USB stick:
 
 | | Full disk image (`make image`) | Lite live ISO (`make live`) |
 |---|---|---|
-| Size | 4G raw file (was 12G) | **~190 MB** ISO (squashfs ~125 MB, xz) |
+| Size | 4G raw file (was 12G) | **~310 MB** ISO (~190 MB base + ~120 MB Docker/RKE2/installer) |
 | Boot | signed UKI, Secure Boot, LUKS2 + Btrfs | GRUB hybrid ISO, BIOS + UEFI, **Secure Boot off** |
 | Firmware | WiFi/GPU/NIC firmware + microcode | none by default; `FIRMWARE=1` adds them |
 | Persistence | yes | no (live; changes lost on reboot) |
@@ -106,6 +106,18 @@ with the x86 BCJ filter.
 
 Log in as `jaa` / `jaa`; you must choose a new password at first login. Root is locked; use
 `sudo`. SSH accepts public keys only and none are installed, so it is closed until you add one.
+
+Built into every ISO (and every installed system):
+- **Docker** (Debian `docker.io` + compose), socket-activated, and the **pinned RKE2** release,
+  disabled until a role is chosen. See [09-cluster.md](09-cluster.md).
+- **`sudo jaa-install`**, which installs to a disk and asks for the Kubernetes role
+  (master / worker / none).
+- **Shell shortcuts** (`config/rootfs/etc/jaa/shell/`): bash's own Ctrl+A/E/U/K/W/R and Tab
+  still work, plus case-insensitive one-Tab completion, Shift+Tab to cycle matches, Up/Down
+  history search by prefix, Ctrl+←/→ word jumps, Alt+S to put `sudo` in front, Alt+K for
+  `kubectl`, fzf (Ctrl+R fuzzy history, Ctrl+T file picker, Alt+C cd), kubectl/docker
+  completion, `k`/`kgp`/`dps`… aliases, and a `[master]`/`[worker]` prompt tag. Run `jaa-keys`
+  for the cheat sheet. Each `~/.bashrc` sources it as its last line; delete that line to opt out.
 
 ## Build / test (copy-paste)
 
@@ -145,10 +157,11 @@ make live FIRMWARE=1
    images on first run.
 2. **No boot-test in CI.** Hosted runners lack nested KVM; `make vm` on a real host is the boot
    gate.
-3. **The lite live ISO is unsigned for Secure Boot and has no installer.** It boots with
-   grub-mkrescue's unsigned GRUB, so Secure Boot must be off. Debian's signed shim + GRUB
-   would fix that. It does not include the TUI/Calamares installers yet. It has booted in QEMU
-   only, not on real hardware. Without `FIRMWARE=1` most WiFi chips will not work.
+3. **The lite live ISO is unsigned for Secure Boot.** It boots with grub-mkrescue's unsigned
+   GRUB, so Secure Boot must be off. Debian's signed shim + GRUB would fix that. It ships the
+   TUI installer (`jaa-install`), but not Calamares. It has booted in QEMU only, not on real
+   hardware. Without `FIRMWARE=1` most WiFi chips will not work.
+   The installer itself (real-disk FDE + signed UKI) has still not been run end to end.
 4. **Cockpit plugin is a starter, unaudited** UI that only runs the read-only CLIs; it is optional
    and not part of the default profiles.
 5. **Rust is ported incrementally.** Only `jaa-core::scope` is ported so far; the CLI crates

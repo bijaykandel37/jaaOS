@@ -16,7 +16,7 @@ This structure is a deliberate consequence of the project being maintained by **
 All seven phases are written. Phases 1–3 are **code, syntax-checked** (not yet built/booted — that
 needs a Debian host and a root VM). Phases 4–7 add **sandboxed test suites that pass on real runs**
 (no root, no VM): `make test` runs all six (hosting, monitoring, vapt, update, release, system-toml).
-The lite live ISO (`make live`, ~190 MB) is built and boots to a login prompt in QEMU (BIOS + UEFI). The full image build and the GitHub workflows still need a run on real infrastructure. New
+The lite live ISO (`make live`, ~310 MB, with Docker, RKE2 and the installer) is built and boots to a login prompt in QEMU (BIOS + UEFI). The installer asks whether a machine is a Kubernetes master, worker or neither ([docs/09-cluster.md](docs/09-cluster.md)). The full image build and the GitHub workflows still need a run on real infrastructure. New
 here? Read [`CLAUDE.md`](CLAUDE.md) for a fast orientation and the [`docs/`](docs/README.md) index.
 
 | Phase | Scope | State |
@@ -37,7 +37,7 @@ make deps      # install build/test dependencies
 make lint      # bash -n + shellcheck all scripts
 make image     # build out/jaaos-minimal.img (image step needs root)
 make vm        # boot it in QEMU (OVMF + swtpm)
-make live      # build the ~190 MB lite live ISO out/jaaos-lite.iso (root)
+make live      # build the ~310 MB lite live ISO out/jaaos-lite.iso (root)
 make live-test # boot the ISO in QEMU (BIOS + UEFI) and wait for the login prompt
 make help      # list every entry point
 ```

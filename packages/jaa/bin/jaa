@@ -50,7 +50,7 @@ svc_enabled() {
 	if [ -n "${JAA_FAKE_ENABLED+x}" ]; then case " $JAA_FAKE_ENABLED " in *" $1 "*) return 0;; *) return 1;; esac; fi
 	have systemctl && [ "$(systemctl is-enabled "$1" 2>/dev/null)" = enabled ]
 }
-port_open() { grep -q "{ $1 }" "$PREFIX/etc/nftables.d/jaa-host.nft" 2>/dev/null; }
+port_open() { grep -q "jaa_tcp_open tcp dport $1 ct state new accept" "$PREFIX/etc/nftables.d/jaa-host.nft" 2>/dev/null; }
 
 require_toml() { [ -f "$SYS_TOML" ] || die "no $SYS_TOML (create it; see the shipped example)"; }
 
@@ -107,7 +107,7 @@ cmd_apply() {
 	done
 	for x in $(toml_list firewall.tcp); do
 		valid_port "$x" || die "invalid tcp port: $x"
-		port_open "$x" || run nft add element inet filter jaa_tcp_open "{ $x }"
+		port_open "$x" || run nft add rule inet filter jaa_tcp_open tcp dport "$x" ct state new accept
 	done
 	[ "$dry" -eq 1 ] && echo "(dry-run: nothing executed)"
 	return 0

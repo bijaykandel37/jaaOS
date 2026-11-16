@@ -1,0 +1,3 @@
+# Managed by jaa-cluster (role: none). Rebuilt by 'jaa-cluster firewall'; do not edit.
+flush chain inet filter jaa_cluster_in
+flush chain inet filter jaa_cluster_fwd

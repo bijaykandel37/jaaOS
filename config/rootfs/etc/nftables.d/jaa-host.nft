@@ -1,4 +1,4 @@
 # Runtime-opened ports managed by `jaa-host` (and later `jaa fw`).
-# Included by /etc/nftables.conf AFTER the inet filter table + jaa_tcp_open set are
-# defined, so these lines add elements to that existing set. Edited by tooling, not by hand.
+# Included by /etc/nftables.conf AFTER the inet filter table + jaa_tcp_open chain are
+# defined, so these lines add one rule per port to that chain. Edited by tooling, not by hand.
 # (Empty is valid — comments only until jaa-host opens a port.)
