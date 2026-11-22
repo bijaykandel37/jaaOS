@@ -1,0 +1,23 @@
+# Samsung extras that use resources but are not needed for calls, camera, sensors or settings.
+# Format: <tier> <package>  # what you lose. Removal is per-user and reversible (see google.txt).
+safe       com.samsung.android.app.spage               # Samsung Free / Bixby Home feed (left of the home screen)
+safe       com.samsung.android.app.tips                # Tips
+safe       com.samsung.android.mateagent               # Galaxy Friends
+safe       com.samsung.sree                            # Samsung Global Goals
+safe       com.samsung.android.tvplus                  # Samsung TV Plus
+safe       com.samsung.android.kidsinstaller           # Samsung Kids installer
+safe       com.samsung.android.game.gamehome           # Game Launcher
+safe       com.samsung.android.livestickers            # Live stickers
+safe       com.samsung.android.stickercenter           # Sticker center
+safe       com.samsung.android.app.watchmanagerstub    # Galaxy Wearable stub (reinstall from Galaxy Store if you get a watch)
+standard   com.samsung.android.bixby.agent             # Bixby Voice
+standard   com.samsung.android.bixby.wakeup            # "Hi Bixby" wake word
+standard   com.samsung.android.visionintelligence      # Bixby Vision (camera "Bixby Vision" button goes away)
+standard   com.samsung.android.arzone                  # AR Zone
+standard   com.samsung.android.app.routines            # Modes and Routines
+standard   com.samsung.android.game.gametools          # Game Booster overlay
+standard   com.samsung.android.voc                     # Samsung Members
+aggressive com.samsung.android.aremoji                 # AR Emoji (camera's AR Emoji mode)
+aggressive com.samsung.android.aremojieditor           # AR Emoji editor
+aggressive com.samsung.android.app.sharelive           # Quick Share (Nearby/Quick Share stops working)
+aggressive com.samsung.android.smartsuggestions        # Smart suggestions

@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# jaa-debloat — remove Google and Samsung bloat from a Samsung phone over USB, reversibly,
+# without root, without unlocking the bootloader and without tripping Knox.
+# (prototype / behavioural spec; host-side tool, run from a computer with `adb`.)
+#
+#   jaa-debloat check                         # phone model, One UI, bootloader / OEM-unlock state
+#   jaa-debloat plan  --tier standard         # what WOULD be removed (changes nothing)
+#   jaa-debloat apply --tier standard         # remove it (asks you to type REMOVE)
+#   jaa-debloat restore --all                 # put back everything this tool removed
+#   jaa-debloat restore com.android.chrome    # put back one app
+#   jaa-debloat workspace                     # check the second-workspace options (Secure Folder / users)
+#
+# How it removes: `pm uninstall -k --user 0 <pkg>` hides the app from the phone's owner and stops it
+# from running; the APK stays in the read-only system partition, so `restore` (cmd package
+# install-existing) or a factory reset brings it back. Packages in lists/protected.txt (calls,
+# SMS, camera, keyboard, Knox/Secure Folder, WebView, …) are never removed.
+#
+# Tiers (lists/*.txt): safe < standard < aggressive. "aggressive" removes Google Play Services and
+# the Play Store: many apps lose push notifications, Google sign-in and Google Pay stop working.
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+LISTS="${JAA_DEBLOAT_LISTS:-$SELF_DIR/lists}"
+ADB="${ADB:-adb}"
+STATE="${JAA_DEBLOAT_STATE:-${XDG_DATA_HOME:-$HOME/.local/share}/jaa-debloat}"
+
+die()  { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARN: $*" >&2; }
+
+# Every package name ends up inside `adb shell "<command>"`, which the PHONE's shell parses:
+# accept only real Android package names, so a crafted list line can never run a command.
+valid_pkg()  { [[ "$1" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$ ]] || [ "$1" = android ]; }
+tier_rank()  { case "$1" in safe) echo 1;; standard) echo 2;; aggressive) echo 3;; *) echo 0;; esac; }
+
+phone() { "$ADB" -s "$SERIAL" shell "$@" 2>/dev/null | tr -d '\r'; }
+prop()  { phone getprop "$1"; }
+
+select_device() {
+	command -v "$ADB" >/dev/null 2>&1 || die "adb not found — install it: sudo apt install adb"
+	local devs
+	mapfile -t devs < <("$ADB" devices 2>/dev/null | tr -d '\r' | awk 'NR>1 && $2=="device" {print $1}')
+	local unauth; unauth="$("$ADB" devices 2>/dev/null | tr -d '\r' | awk 'NR>1 && $2=="unauthorized"' | wc -l)"
+	[ "${#devs[@]}" -gt 0 ] || {
+		[ "$unauth" -gt 0 ] && die "phone is connected but not authorised — unlock it and tap 'Allow' on the USB debugging prompt"
+		die "no phone found. On the phone: Settings > About phone > Software information > tap 'Build number' 7x; then Settings > Developer options > USB debugging ON; plug in USB"
+	}
+	[ "${#devs[@]}" -eq 1 ] || die "more than one device connected (${devs[*]}); unplug the others"
+	SERIAL="${devs[0]}"
+	local maker; maker="$(prop ro.product.manufacturer)"
+	if [ "${maker,,}" != samsung ] && [ "${JAA_ANY_VENDOR:-0}" != 1 ]; then
+		die "this is a '$maker' phone; the lists are for Samsung (set JAA_ANY_VENDOR=1 to use them anyway)"
+	fi
+}
+
+installed_pkgs() { phone pm list packages | sed -n 's/^package://p' | sort -u; }
+
+is_protected() {
+	local pkg="$1" pat
+	while IFS= read -r pat; do
+		pat="${pat%%#*}"; pat="${pat//[[:space:]]/}"; [ -n "$pat" ] || continue
+		# shellcheck disable=SC2053  # glob match on purpose
+		[[ "$pkg" == $pat ]] && return 0
+	done < "$LISTS/protected.txt"
+	return 1
+}
+
+# Print "tier package description" for every list entry at or below the tier.
+list_entries() { # <tier>
+	local max; max="$(tier_rank "$1")"; [ "$max" -gt 0 ] || die "tier must be safe, standard or aggressive"
+	local f line tier pkg desc
+	for f in "$LISTS"/google.txt "$LISTS"/samsung.txt "$LISTS"/thirdparty.txt; do
+		[ -f "$f" ] || continue
+		while IFS= read -r line; do
+			line="${line%%$'\r'}"
+			[[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+			tier="$(awk '{print $1}' <<<"$line")"; pkg="$(awk '{print $2}' <<<"$line")"
+			desc="$(sed -n 's/^[^#]*#[[:space:]]*//p' <<<"$line")"
+			valid_pkg "$pkg" || { warn "ignoring invalid package name in $(basename "$f"): $pkg"; continue; }
+			[ "$(tier_rank "$tier")" -gt 0 ] || { warn "ignoring unknown tier '$tier' for $pkg"; continue; }
+			[ "$(tier_rank "$tier")" -le "$max" ] && printf '%s\t%s\t%s\n' "$tier" "$pkg" "$desc"
+		done < "$f"
+	done
+}
+
+# Entries that are installed on this phone and not protected.
+plan_entries() { # <tier>
+	local inst; inst="$(installed_pkgs)"
+	local tier pkg desc
+	while IFS=$'\t' read -r tier pkg desc; do
+		grep -qxF "$pkg" <<<"$inst" || continue
+		if is_protected "$pkg"; then warn "protected, skipping: $pkg"; continue; fi
+		printf '%s\t%s\t%s\n' "$tier" "$pkg" "$desc"
+	done < <(list_entries "$1")
+}
+
+parse_tier() { # args -> TIER
+	TIER=standard; YES=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--tier) TIER="${2:-}"; shift 2 ;;
+			--yes)  YES=1; shift ;;
+			*) die "unknown option: $1" ;;
+		esac
+	done
+	[ "$(tier_rank "$TIER")" -gt 0 ] || die "--tier must be safe, standard or aggressive"
+}
+
+cmd_check() {
+	select_device
+	local locked unlock oneui
+	locked="$(prop ro.boot.flash.locked)"; unlock="$(prop sys.oem_unlock_allowed)"
+	oneui="$(prop ro.build.version.oneui)"
+	cat <<EOF
+phone:        $(prop ro.product.manufacturer) $(prop ro.product.model)  (codename $(prop ro.product.device), serial $SERIAL)
+Android:      $(prop ro.build.version.release)   One UI: ${oneui:-unknown}   build $(prop ro.build.display.id)
+bootloader:   $( [ "$locked" = 1 ] && echo locked || echo "${locked:-unknown}")   OEM unlocking allowed: $( [ "$unlock" = 1 ] && echo yes || echo "no / not offered")
+apps:         $(installed_pkgs | wc -l) packages installed for the owner
+EOF
+	echo
+	echo "Debloating (this tool) works on this phone as-is: no unlock, no root, Knox untouched."
+	if [ "$unlock" != 1 ]; then
+		echo "A custom ROM is NOT possible right now: 'OEM unlocking' is not allowed/offered on this phone"
+		echo "(US/Canada models and many One UI 8+ models cannot unlock at all). See docs/11-mobile.md."
+	fi
+}
+
+cmd_plan() {
+	parse_tier "$@"; select_device
+	local n=0 tier pkg desc
+	echo "Would remove (tier <= $TIER) from $(prop ro.product.model):"
+	while IFS=$'\t' read -r tier pkg desc; do
+		printf '  %-10s %-45s %s\n' "$tier" "$pkg" "$desc"; n=$((n + 1))
+	done < <(plan_entries "$TIER")
+	echo "$n package(s). Nothing was changed. Run: jaa-debloat apply --tier $TIER"
+}
+
+cmd_apply() {
+	parse_tier "$@"; select_device
+	local entries; entries="$(plan_entries "$TIER")"
+	[ -n "$entries" ] || { echo "Nothing to remove at tier $TIER."; return 0; }
+	echo "About to remove for the phone's owner (reversible with 'jaa-debloat restore --all'):"
+	awk -F'\t' '{printf "  %-10s %s\n", $1, $2}' <<<"$entries"
+	if [ "$TIER" = aggressive ]; then
+		echo
+		echo "AGGRESSIVE: this removes Google Play Services / Play Store. Apps that rely on them lose push"
+		echo "notifications, Google sign-in, Google Pay and Play-based updates. Install F-Droid first."
+	fi
+	if [ "$YES" != 1 ]; then
+		local ans; read -r -p "Type REMOVE to continue: " ans
+		[ "$ans" = REMOVE ] || die "not confirmed — nothing changed"
+	fi
+	mkdir -p "$STATE"; local log="$STATE/removed-$SERIAL.txt"
+	local tier pkg desc out ok=0 bad=0
+	while IFS=$'\t' read -r tier pkg desc; do
+		valid_pkg "$pkg" || continue
+		out="$(phone pm uninstall -k --user 0 "$pkg")"
+		if [[ "$out" == *Success* ]]; then
+			printf '%s\t%s\n' "$(date -u +%FT%TZ)" "$pkg" >> "$log"; ok=$((ok + 1)); echo "  removed  $pkg"
+		else
+			bad=$((bad + 1)); echo "  FAILED   $pkg: $out"
+		fi
+	done <<<"$entries"
+	echo "$ok removed, $bad failed. Record: $log"
+	echo "Reboot the phone to free the memory those apps held."
+}
+
+cmd_restore() {
+	[ $# -gt 0 ] || die "usage: jaa-debloat restore --all | PACKAGE..."
+	select_device
+	local pkgs=() log="$STATE/removed-$SERIAL.txt"
+	if [ "$1" = --all ]; then
+		[ -f "$log" ] || die "no record of removals for this phone ($log)"
+		mapfile -t pkgs < <(awk -F'\t' '{print $2}' "$log" | sort -u)
+	else
+		pkgs=("$@")
+	fi
+	local pkg out
+	for pkg in "${pkgs[@]}"; do
+		valid_pkg "$pkg" || { warn "skipping invalid package name: $pkg"; continue; }
+		out="$(phone cmd package install-existing --user 0 "$pkg")"
+		if [[ "$out" == *"installed for user"* ]]; then echo "  restored $pkg"; else echo "  FAILED   $pkg: $out"; fi
+	done
+}
+
+cmd_workspace() {
+	select_device
+	local users sf
+	users="$(phone pm list users)"
+	sf="$(installed_pkgs | grep -cx 'com.samsung.knox.securefolder' || true)"
+	cat <<EOF
+Second workspace options on this phone (details: docs/11-mobile.md, "Two PINs, two workspaces"):
+
+  Secure Folder:  $( [ "$sf" -ge 1 ] && echo "available" || echo "not installed / not supported")
+     Settings > Security and privacy > More security settings > Secure Folder.
+     Its own PIN/pattern/password + fingerprint, its own copies of apps (camera included),
+     encrypted separately. You can hide its icon (Secure Folder settings > "Add Secure Folder
+     to Apps screen" off) and open it from the quick-settings tile.
+
+  Android users on this phone:
+$(sed 's/^/     /' <<<"$users")
+EOF
+}
+
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+
+SERIAL=""
+cmd="${1:-help}"; [ $# -gt 0 ] && shift
+case "$cmd" in
+	check)     cmd_check "$@" ;;
+	plan)      cmd_plan "$@" ;;
+	apply)     cmd_apply "$@" ;;
+	restore)   cmd_restore "$@" ;;
+	workspace) cmd_workspace "$@" ;;
+	help|-h|--help) usage ;;
+	*) usage >&2; exit 2 ;;
+esac

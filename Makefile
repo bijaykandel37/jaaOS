@@ -45,7 +45,7 @@ release: ## Checksums + manifest + SBOM + signature over out/ artifacts (out/dis
 	bash build/release.sh
 
 test: ## Run the sandboxed test suites (no root, no VM)
-	@for t in hosting monitoring vapt update release system-toml cluster; do \
+	@for t in hosting monitoring vapt update release system-toml cluster mobile-debloat; do \
 	  echo "== $$t =="; bash tests/vm/$$t-test.sh || exit 1; done
 
 rust: ## Build all Rust crates in release mode
@@ -62,7 +62,7 @@ pam: ## Build the native C PAM module skeleton (needs libpam0g-dev)
 	$(MAKE) -C packages/jaa-env/pam_module
 
 lint: ## bash -n + shellcheck every shell script
-	@files=$$(grep -rlE '^#!/(usr/bin/env bash|bin/sh|bin/bash)' build packages tests installer 2>/dev/null); \
+	@files=$$(grep -rlE '^#!/(usr/bin/env bash|bin/sh|bin/bash)' build packages tests installer mobile 2>/dev/null); \
 	for f in $$files; do bash -n "$$f" && echo "bash -n ok: $$f"; done; \
 	if command -v shellcheck >/dev/null; then shellcheck -S warning $$files || true; \
 	else echo "(shellcheck not installed; ran bash -n only)"; fi

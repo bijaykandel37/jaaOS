@@ -50,6 +50,7 @@ exactly where a C memory bug would be an auth bypass. Therefore:
 - `packages/jaa-env/` — dual-env: `providers/{luks2,shufflecake}`, `bin/{jaa-env,jaa-env-pam}`, `pam/jaa-env.pamd`, `pam_module/` (native C **skeleton, unaudited**).
 - `tests/vm/` — root/VM suites: `run-qemu.sh`, `checks.sh` (phase-1), `dual-env-test.sh` (phase-2), `install-test.sh` (loopback). Sandbox suites (no root, run via `make test`): `hosting`, `monitoring`, `vapt`, `update`, `release`, `system-toml`. `tests/forensic/` — deniability characterization.
 - `packages/` — bash specs: `jaa` (install + declarative diff/apply), `jaa-env`, `jaa-host`, `jaa-health`, `jaa-scan`, `jaa-update`, `jaa-cluster` (RKE2 role, join codes, LAN discovery).
+- `mobile/` — jaaOS Mobile (`docs/11-mobile.md`): `debloat/jaa-debloat` (adb, reversible `pm uninstall --user 0`, tiered lists + `protected.txt`; sandbox suite `mobile-debloat-test.sh`), `rom/overlay/` (multi-user overlay for a LineageOS build — not built). Never remove anything matching `protected.txt`, and validate package names before they reach `adb shell` (the phone's shell parses them).
 - `installer/` — TUI + Calamares (Phase 3), `cockpit/jaa/` (optional web UI **scaffold**). `overlay-repo/`, `ci/` — scaffolded.
 
 ## Status / roadmap
