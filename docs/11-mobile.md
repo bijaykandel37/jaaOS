@@ -19,6 +19,13 @@ ROM has been built or booted.
 
 That gives two paths.
 
+**Galaxy A71 (SM-A715F) owners:** your phone *can* take path B. It has an official LineageOS 23.2
+(Android 16) build, while Samsung's own updates stopped at Android 13. Read
+[`mobile/devices/a71.md`](../mobile/devices/a71.md) for the stay-or-switch comparison (VoLTE,
+camera, banking apps, Knox) and the exact steps. `jaa-debloat rom-check` verifies the phone is
+ready (model, Android 13 firmware, OEM unlocking, no Google account, battery) without changing
+anything.
+
 ## Path A (recommended): stock Samsung firmware, de-Googled with `jaa-debloat`
 
 Keeps **every camera feature**, Knox, updates from Samsung and Secure Folder. Nothing is
@@ -139,6 +146,8 @@ Samsung updates.
 - `mobile/debloat/lists/{google,samsung,thirdparty}.txt` — what to remove, by tier;
   `protected.txt` — never removed.
 - `mobile/rom/overlay/` — custom-ROM overlay enabling multi-user workspaces (not built).
+- `mobile/devices/supported.txt` + `mobile/devices/a71.md` — documented LineageOS phones (data
+  for `rom-check`) and the Galaxy A71 guide.
 - `tests/vm/mobile-debloat-test.sh` — sandbox test with a fake `adb` (in `make test`).
 
 ## Limits (honest)

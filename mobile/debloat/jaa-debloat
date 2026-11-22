@@ -9,6 +9,7 @@
 #   jaa-debloat restore --all                 # put back everything this tool removed
 #   jaa-debloat restore com.android.chrome    # put back one app
 #   jaa-debloat workspace                     # check the second-workspace options (Secure Folder / users)
+#   jaa-debloat rom-check                     # read-only: is this phone ready for its LineageOS install?
 #
 # How it removes: `pm uninstall -k --user 0 <pkg>` hides the app from the phone's owner and stops it
 # from running; the APK stays in the read-only system partition, so `restore` (cmd package
@@ -21,6 +22,7 @@ set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 LISTS="${JAA_DEBLOAT_LISTS:-$SELF_DIR/lists}"
+DEVICES="${JAA_DEBLOAT_DEVICES:-$SELF_DIR/../devices/supported.txt}"
 ADB="${ADB:-adb}"
 STATE="${JAA_DEBLOAT_STATE:-${XDG_DATA_HOME:-$HOME/.local/share}/jaa-debloat}"
 
@@ -136,6 +138,11 @@ cmd_plan() {
 
 cmd_apply() {
 	parse_tier "$@"; select_device
+	# LineageOS already ships a minimal app set and asks users not to remove system apps
+	# (wiki.lineageos.org install guide, "What next?"): removing them there can break the system.
+	if [ -n "$(prop ro.lineage.version)" ]; then
+		die "this phone runs LineageOS $(prop ro.lineage.version): it has no Google/Samsung bloat, and LineageOS warns that removing system apps can break it — nothing changed"
+	fi
 	local entries; entries="$(plan_entries "$TIER")"
 	[ -n "$entries" ] || { echo "Nothing to remove at tier $TIER."; return 0; }
 	echo "About to remove for the phone's owner (reversible with 'jaa-debloat restore --all'):"
@@ -201,7 +208,46 @@ $(sed 's/^/     /' <<<"$users")
 EOF
 }
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+# Read-only pre-flight for the custom-ROM path (docs/11-mobile.md, mobile/devices/<codename>.md).
+# It changes nothing: unlocking and flashing stay manual, step by step, from the device guide.
+cmd_rom_check() {
+	select_device
+	local code model rel unlock row models need lineage guide fails=0
+	code="$(prop ro.product.device)"; model="$(prop ro.product.model)"; rel="$(prop ro.build.version.release)"
+	unlock="$(prop sys.oem_unlock_allowed)"
+	row="$(awk -F'|' -v c="$code" '$0 !~ /^[[:space:]]*#/ { k = $1; gsub(/^[ \t]+|[ \t]+$/, "", k); if (k == c) print }' "$DEVICES" 2>/dev/null | head -1)"
+	echo "phone: $model (codename $code), Android $rel"
+	if [ -z "$row" ]; then
+		echo "FAIL  no documented LineageOS build for '$code' in $DEVICES — stay on path A (debloat)."
+		return 1
+	fi
+	IFS='|' read -r _ models need lineage guide <<<"$row"
+	models="$(xargs <<<"$models")"; need="$(xargs <<<"$need")"; lineage="$(xargs <<<"$lineage")"; guide="$(xargs <<<"$guide")"
+	echo "build: LineageOS $lineage — guide: $guide"
+	local base="${model%%/*}" m match=0
+	for m in $models; do [ "${m%%/*}" = "$base" ] && match=1; done
+	if [ "$match" = 1 ]; then echo "PASS  model $model is supported ($models)"
+	else echo "FAIL  model $model is not one of: $models (do NOT flash)"; fails=$((fails + 1)); fi
+	if [ "${rel%%.*}" = "$need" ]; then echo "PASS  stock firmware is Android $rel (required: $need)"
+	else echo "FAIL  stock firmware is Android $rel; LineageOS needs stock Android $need firmware first"; fails=$((fails + 1)); fi
+	if [ "$unlock" = 1 ]; then echo "PASS  OEM unlocking is allowed"
+	else echo "FAIL  OEM unlocking is off: Settings > Developer options > OEM unlocking (connect to Wi-Fi first)"; fails=$((fails + 1)); fi
+	local gacc; gacc="$(phone dumpsys account | grep -c 'type=com.google' || true)"
+	if [ "${gacc:-0}" -eq 0 ]; then echo "PASS  no Google account on the phone (no factory-reset-protection lock)"
+	else echo "FAIL  $gacc Google account(s) present: remove them (Settings > Accounts) or the phone locks after the wipe"; fails=$((fails + 1)); fi
+	local bat; bat="$(phone dumpsys battery | sed -n 's/^ *level: *//p' | head -1)"
+	if [ "${bat:-0}" -ge 50 ]; then echo "PASS  battery ${bat}%"
+	else echo "FAIL  battery ${bat:-?}% — charge to at least 50% before flashing"; fails=$((fails + 1)); fi
+	echo
+	echo "Read before you decide (details in $guide):"
+	echo "  - unlocking WIPES the phone and trips Knox for good (Secure Folder, Samsung Pass/Wallet stop working)"
+	echo "  - no VoLTE / Wi-Fi calling on LineageOS for this phone: calls use 2G/3G — check your carrier still has them"
+	echo "  - apps that require Play Integrity (some banks) will not work; Samsung's camera processing is gone"
+	[ "$fails" -eq 0 ] && echo "READY: all checks passed. Follow the guide step by step; this tool flashes nothing."
+	[ "$fails" -eq 0 ]
+}
+
+usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
 
 SERIAL=""
 cmd="${1:-help}"; [ $# -gt 0 ] && shift
@@ -211,6 +257,7 @@ case "$cmd" in
 	apply)     cmd_apply "$@" ;;
 	restore)   cmd_restore "$@" ;;
 	workspace) cmd_workspace "$@" ;;
+	rom-check) cmd_rom_check "$@" ;;
 	help|-h|--help) usage ;;
 	*) usage >&2; exit 2 ;;
 esac

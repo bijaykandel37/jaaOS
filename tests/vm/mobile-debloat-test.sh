@@ -31,8 +31,13 @@ fi
 echo "$*" >> "$LOG"
 case "$*" in
 	"getprop ro.product.manufacturer") echo "${FAKE_MAKER:-samsung}" ;;
-	"getprop ro.product.model") echo "SM-S921B" ;;
-	"getprop sys.oem_unlock_allowed") echo 0 ;;
+	"getprop ro.product.model") echo "${FAKE_MODEL:-SM-S921B}" ;;
+	"getprop ro.product.device") echo "${FAKE_CODE:-e1s}" ;;
+	"getprop ro.build.version.release") echo "${FAKE_ANDROID:-14}" ;;
+	"getprop ro.lineage.version") echo "${FAKE_LINEAGE:-}" ;;
+	"getprop sys.oem_unlock_allowed") echo "${FAKE_OEMUNLOCK:-0}" ;;
+	"dumpsys account") [ "${FAKE_GACCT:-0}" = 1 ] && echo "    Account {name=me@gmail.com, type=com.google}" ;;
+	"dumpsys battery") echo "  level: ${FAKE_BATTERY:-80}" ;;
 	"getprop ro.boot.flash.locked") echo 1 ;;
 	"pm list packages")
 		for p in android com.android.systemui com.sec.android.app.camera com.google.android.webview \
@@ -108,6 +113,35 @@ check "restore refuses invalid names" sh -c "! grep -q reboot '$LOG'"
 echo "== workspace =="
 out="$(bash "$CLI" workspace 2>&1)"
 check "workspace reports Secure Folder available" sh -c "echo \"\$0\" | grep -q 'Secure Folder:  available'" "$out"
+
+echo "== rom-check (Galaxy A71) =="
+A71=(FAKE_CODE=a71 FAKE_MODEL=SM-A715F FAKE_ANDROID=13 FAKE_OEMUNLOCK=1 FAKE_GACCT=0 FAKE_BATTERY=80)
+: > "$LOG"
+out="$(env "${A71[@]}" bash "$CLI" rom-check 2>&1)"; rc=$?
+check "A71 ready: all checks pass" sh -c "[ $rc -eq 0 ] && echo \"\$0\" | grep -q READY" "$out"
+check "A71: names LineageOS 23.2 and the guide" sh -c "echo \"\$0\" | grep -q '23.2' && echo \"\$0\" | grep -q 'mobile/devices/a71.md'" "$out"
+check "A71: warns about VoLTE" sh -c "echo \"\$0\" | grep -q 'VoLTE'" "$out"
+check "rom-check flashes/removes nothing" sh -c "! grep -qE 'uninstall|reboot|flash' '$LOG'"
+out="$(env "${A71[@]}" FAKE_MODEL=SM-A715F/DS bash "$CLI" rom-check 2>&1)"; rc=$?
+check "A71 dual-SIM model accepted" test $rc -eq 0
+out="$(env "${A71[@]}" FAKE_ANDROID=12 bash "$CLI" rom-check 2>&1)"; rc=$?
+check "wrong stock firmware fails" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'needs stock Android 13'" "$out"
+out="$(env "${A71[@]}" FAKE_GACCT=1 bash "$CLI" rom-check 2>&1)"; rc=$?
+check "Google account (FRP) fails" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'Google account'" "$out"
+out="$(env "${A71[@]}" FAKE_OEMUNLOCK=0 bash "$CLI" rom-check 2>&1)"; rc=$?
+check "OEM unlocking off fails" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'OEM unlocking is off'" "$out"
+out="$(env "${A71[@]}" FAKE_MODEL=SM-A716B bash "$CLI" rom-check 2>&1)"; rc=$?
+check "A71 5G model (SM-A716B) refused" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'do NOT flash'" "$out"
+out="$(env "${A71[@]}" FAKE_BATTERY=20 bash "$CLI" rom-check 2>&1)"; rc=$?
+check "low battery fails" test $rc -ne 0
+out="$(bash "$CLI" rom-check 2>&1)"; rc=$?
+check "undocumented phone -> stay on path A" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'stay on path A'" "$out"
+
+echo "== LineageOS: apply refuses =="
+: > "$LOG"
+FAKE_LINEAGE=23.2 bash "$CLI" apply --tier safe --yes >"$SBX/o" 2>&1; rc=$?
+check "apply refuses on LineageOS" sh -c "[ $rc -ne 0 ] && grep -q 'runs LineageOS' '$SBX/o'"
+check "nothing removed on LineageOS" test "$(removes)" = 0
 
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

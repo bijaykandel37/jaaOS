@@ -1,0 +1,4 @@
+# Phones with an official LineageOS build that jaaOS Mobile has documented. Parsed by
+# `jaa-debloat rom-check` (data, never sourced). Checked against wiki.lineageos.org on 2026-11-22.
+# codename | models (exact match) | stock Android required before installing | LineageOS | guide
+a71 | SM-A715F SM-A715F/DS SM-A715F/DSN SM-A715F/DSM | 13 | 23.2 (Android 16) | mobile/devices/a71.md
