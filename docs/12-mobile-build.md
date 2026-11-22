@@ -44,6 +44,7 @@ you still want to compile it yourself, see Appendix A.
 | Two PINs → two workspaces | **Private space** (own PIN/pattern, hidden while locked) or a **second user** (own lock + own encryption key; the build allows 4 users) | done. Hidden from casual inspection only (see limits) |
 | Audit log of every command | Termux shell: every command line, exit code and directory, hash-chained (`jaa-audit verify`). Computer: every `adb` command `jaa-mobile` runs | done. Tamper-*evident*, not tamper-proof (no root) |
 | Remote wipe | **FMD** (remote locate/lock/wipe by SMS or FMD server) + **Wasted** (panic wipe trigger) | done (you activate device admin on the phone) |
+| WiFi auditor ("is my WiFi hackable?") | `jaa-wifi`: authorized-scope-only assessment of nearby networks (open/WEP/WPA/WPS/WPA3) with fixes; the legal core of AndroDumpper. Active cracking needs an external adapter and is not shipped | done (assessment). AndroDumpper-style WPS attacks mostly fail on Android 16 |
 | DevOps + security toolkit | Termux with 89 verified packages + Ansible: kubectl, helm, k9s, gh, git, aws/doctl CLIs, Go/Rust/Python/Node/Java, Postgres/MariaDB/Redis clients, nmap, dig, mtr, iperf3, socat, Tor, radare2/rizin, binwalk, gdb, termshark (+ PCAPdroid captures) | done. Assessment tools only: no exploit frameworks or brute-forcers (jaaOS policy) |
 | Desktop over USB-C to a monitor | **not possible on this phone**: the A71 kernel has **no DisplayPort driver** (checked in its build config) and its USB-C port carries no video | ✗. Substitute: XFCE Linux desktop over VNC (`jaa-desktop`), on the phone with a Bluetooth keyboard/mouse, or on any PC/TV through an SSH tunnel |
 | Low-bandwidth mode | `jaa-mobile lowbw on`: Data Saver blocks background data for every app except Termux (SSH), ConnectBot, ntfy (alerts) and FMD (wipe) | done, on mobile data. For Wi-Fi too, block apps in NetGuard |
@@ -204,6 +205,54 @@ mobile/jaa-mobile lowbw off
 Every other app loses background data on mobile networks. For a hard block (also on Wi-Fi and in
 the foreground), set NetGuard to block all apps except those four.
 
+## Step 8b — Test your own WiFi (`jaa-wifi`)
+
+Like everything security-related in jaaOS, WiFi testing is **authorized-only, scope-enforced and
+audited** — the same contract as `jaa-scan` (`docs/07-phase6-vapt.md`). `jaa-wifi` answers "can
+this network be hacked, and why" for networks **you own or are authorized to test**, by reading
+the public beacon each access point broadcasts (the thing every phone already sees). It does **not**
+attack: no WPS-PIN cracking, no handshake capture, no deauth. In Termux:
+
+```bash
+jaa-wifi engagement init
+```
+
+Edit `wifi-engagement.conf`: set `AUTHORIZATION_REF` (for your own WiFi, "I own this network") and
+list your networks in `SCOPE_SSIDS` / `SCOPE_BSSIDS`. Then:
+
+```bash
+jaa-wifi audit
+```
+
+It scans, and for each **in-scope** network prints a verdict and the fix. Networks you did not list
+are counted but never assessed. `jaa-wifi check-own` assesses just the network you are on.
+
+| What the beacon shows | Verdict | Why / what to do |
+|---|---|---|
+| Open (no encryption) | CRITICAL | anyone nearby reads your traffic — turn on WPA3/WPA2 |
+| WEP | CRITICAL | broken; recovered in minutes — switch to WPA3/WPA2-AES |
+| WPA1 / TKIP | HIGH | deprecated cipher — switch to WPA2-AES or WPA3 |
+| **WPS enabled** | HIGH | the 8-digit PIN is brute-forceable (this is what AndroDumpper/Reaver target) — **turn WPS off** |
+| WPA2-PSK | MEDIUM | only as strong as the passphrase; a captured handshake can be dictionary-cracked offline — use a long random passphrase, enable WPA3 |
+| WPA3-SAE | OK | resistant to offline cracking |
+
+This is the useful, legal core of what AndroDumpper did: it flags the WPS weakness (and worse) so
+you can fix it. **AndroDumpper itself barely works on modern Android** — it used the Android
+WPS-connect API that Google removed in Android 9+, so on your A71's Android 16 it mostly fails.
+
+### Active WiFi testing (only if you have written authorization and an external adapter)
+
+Actually *cracking* a network (capturing a WPA handshake, running a WPS-PIN or pixie-dust attack)
+needs **monitor mode and packet injection**, which the A71's internal WiFi cannot do (its
+proprietary Qualcomm driver has no monitor mode). It requires an **external USB-OTG WiFi adapter**
+with a supported chipset (Atheros AR9271, or Realtek RTL8812AU) and, for most tools, **root**.
+jaaOS does **not** install these tools or automate this — same rule as `jaa-scan`: no exploit,
+brute-force or DoS tooling ships by default. If you are testing a network you are authorized to
+test, you install the standard tools yourself in Termux's root repo
+(`aircrack-ng`, `reaver`, `pixiewps`, `hcxdumptool` — some are only in community repos) and drive
+the external adapter. Record the authorization in your `wifi-engagement.conf` first.
+`jaa-wifi` stays assessment-only on purpose: it tells you what to fix, it does not break in.
+
 ## Step 9 — Updates
 
 - **LineageOS:** Settings > System > Updater (weekly, signed by LineageOS). The jaaOS layer stays.
@@ -228,6 +277,7 @@ emulator. These are the **real files**, checked with real tools:
 | Verified boot (vbmeta) | flags = 3: AVB **disabled** |
 | 17 pinned apps (`jaa-mobile fetch-apps --flavor microg`) | all OK: SHA-256 + signing certificate via `apksigner`. microG pinned to its repository key; a wrong pin is refused |
 | 89 Termux toolkit packages | all present in the Termux aarch64 index |
+| `tests/vm/mobile-wifi-test.sh` (canned scan) | 22 checks: authorization/scope gate, verdicts (open/WEP/WPA/WPS/WPA3), out-of-scope never assessed, exclusions win, audited, no attack surface |
 | `tests/vm/mobile-tools-test.sh` (fake adb/pkg, real bash) | 42 checks: setup flavours and order, refusals, low-bandwidth on/off, both audit logs (incl. tamper detection), toolkit install, SSH keys-only, localhost-only VNC |
 | `tests/vm/mobile-debloat-test.sh` | 40 checks (stock path and rom-check) |
 

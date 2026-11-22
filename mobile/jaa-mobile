@@ -201,6 +201,8 @@ cmd_setup() {
 	echo "== DevOps / security toolkit for Termux"
 	[ -f "$TERMUX_SETUP" ] || die "missing $TERMUX_SETUP"
 	adbx push "$TERMUX_SETUP" /sdcard/Download/jaa-devsec-setup.sh >/dev/null
+	[ -f "$SELF_DIR/wifi/jaa-wifi" ] && adbx push "$SELF_DIR/wifi/jaa-wifi" /sdcard/Download/jaa-wifi >/dev/null
+	[ -f "$SELF_DIR/wifi/engagement.example.conf" ] && adbx push "$SELF_DIR/wifi/engagement.example.conf" /sdcard/Download/wifi-engagement.example.conf >/dev/null
 	cat <<EOF
 
 Done. Finish on the phone (these steps need you, by design):

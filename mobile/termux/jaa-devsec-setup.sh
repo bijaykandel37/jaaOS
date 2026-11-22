@@ -31,7 +31,8 @@ BASE=(termux-tools termux-api termux-services coreutils busybox ncurses-utils op
 DEVOPS=(python python-pip nodejs-lts golang rust make cmake clang kubectl helm k9s gh awscli doctl
 	httpie postgresql mariadb redis sqlite openjdk-21 maven gradle ruby php perl shellcheck mc)
 SECURITY=(nmap dnsutils ldns whois traceroute mtr iperf3 netcat-openbsd socat openssl-tool iproute2
-	net-tools lsof nethogs tor torsocks proxychains-ng radare2 rizin binwalk gdb strace ltrace termshark)
+	net-tools lsof nethogs tor torsocks proxychains-ng radare2 rizin binwalk gdb strace ltrace termshark
+	iw wireless-tools wpa-supplicant)
 PIP=(ansible-core yamllint)
 DESKTOP_PKGS=(xfce4 tigervnc)
 
@@ -139,12 +140,20 @@ TOOL
 	chmod 0755 "$PREFIX/bin/jaa-desktop"
 fi
 
+# ---- WiFi auditor (jaa-wifi) --------------------------------------------------------------
+if [ -f "$HOME/storage/downloads/jaa-wifi" ]; then
+	install -m0755 "$HOME/storage/downloads/jaa-wifi" "$PREFIX/bin/jaa-wifi"
+	install -Dm0644 "$HOME/storage/downloads/wifi-engagement.example.conf" "$PREFIX/share/jaa-wifi/engagement.example.conf" 2>/dev/null || true
+	echo "== installed jaa-wifi (WiFi security auditor, authorized-scope-only)"
+fi
+
 cat <<EOF
 
 jaaOS Mobile toolkit installed.
   SSH:      add your public key to ~/.ssh/authorized_keys, then  sshd  (port 8022, keys only)
   Audit:    open a new Termux session; every command is logged. Check:  jaa-audit verify
   Alerts:   jaa-alert "deploy finished"      (set JAA_NTFY_URL to also push to ntfy)
+  WiFi:     jaa-wifi engagement init   (list YOUR networks)   then   jaa-wifi audit
 $( [ "$DESKTOP" = 1 ] && echo "  Desktop:  jaa-desktop start   then AVNC -> 127.0.0.1:5901 (run vncpasswd first)" )
 Security tools are for systems you are authorized to test.
 EOF
