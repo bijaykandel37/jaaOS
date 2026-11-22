@@ -19,7 +19,7 @@ ROM has been built or booted.
 
 That gives two paths.
 
-**Galaxy A71 (SM-A715F) owners:** your phone *can* take path B. It has an official LineageOS 23.2
+**Galaxy A71 (SM-A715F) owners:** the complete procedure is [`12-mobile-build.md`](12-mobile-build.md). your phone *can* take path B. It has an official LineageOS 23.2
 (Android 16) build, while Samsung's own updates stopped at Android 13. Read
 [`mobile/devices/a71.md`](../mobile/devices/a71.md) for the stay-or-switch comparison (VoLTE,
 camera, banking apps, Knox) and the exact steps. `jaa-debloat rom-check` verifies the phone is
