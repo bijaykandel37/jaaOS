@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>jaaOS // netmap</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="logo">▞▚</span> jaa<span class="dim">OS</span> <span class="sep">//</span> <span class="accent">netmap</span></div>
+  <div class="net" id="netinfo">connecting…</div>
+  <div class="live"><span class="dot" id="livedot"></span><span id="livetxt">live</span></div>
+</header>
+
+<section class="stats" id="stats"></section>
+
+<main>
+  <div class="toolbar">
+    <input id="filter" type="search" placeholder="filter: ip / mac / vendor / host / port" autocomplete="off" spellcheck="false">
+    <div class="legend">
+      <span class="tag gw">gateway</span><span class="tag me">this phone</span>
+      <span class="tag new">new</span><span class="tag open">open ports</span>
+    </div>
+  </div>
+  <div class="grid" id="grid"></div>
+  <p class="empty" id="empty" hidden>no devices — waiting for the next scan…</p>
+</main>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-card">
+    <button class="close" id="sheetclose" aria-label="close">✕</button>
+    <div id="sheetbody"></div>
+  </div>
+</div>
+
+<footer class="foot">
+  <span id="foottime">—</span>
+  <span class="dim">assessment only · authorized network · blocking is done through your router</span>
+</footer>
+<script src="app.js"></script>
+</body>
+</html>

@@ -203,6 +203,11 @@ cmd_setup() {
 	adbx push "$TERMUX_SETUP" /sdcard/Download/jaa-devsec-setup.sh >/dev/null
 	[ -f "$SELF_DIR/wifi/jaa-wifi" ] && adbx push "$SELF_DIR/wifi/jaa-wifi" /sdcard/Download/jaa-wifi >/dev/null
 	[ -f "$SELF_DIR/wifi/engagement.example.conf" ] && adbx push "$SELF_DIR/wifi/engagement.example.conf" /sdcard/Download/wifi-engagement.example.conf >/dev/null
+	if [ -f "$SELF_DIR/net/jaa-net" ]; then
+		adbx push "$SELF_DIR/net/jaa-net" /sdcard/Download/jaa-net >/dev/null
+		adbx push "$SELF_DIR/net/jaa-net-scan.py" /sdcard/Download/jaa-net-scan.py >/dev/null
+		adbx push "$SELF_DIR/net/dashboard" /sdcard/Download/jaa-net-dashboard >/dev/null
+	fi
 	cat <<EOF
 
 Done. Finish on the phone (these steps need you, by design):

@@ -32,7 +32,7 @@ DEVOPS=(python python-pip nodejs-lts golang rust make cmake clang kubectl helm k
 	httpie postgresql mariadb redis sqlite openjdk-21 maven gradle ruby php perl shellcheck mc)
 SECURITY=(nmap dnsutils ldns whois traceroute mtr iperf3 netcat-openbsd socat openssl-tool iproute2
 	net-tools lsof nethogs tor torsocks proxychains-ng radare2 rizin binwalk gdb strace ltrace termshark
-	iw wireless-tools wpa-supplicant)
+	iw wireless-tools wpa-supplicant arp-scan)
 PIP=(ansible-core yamllint)
 DESKTOP_PKGS=(xfce4 tigervnc)
 
@@ -140,12 +140,44 @@ TOOL
 	chmod 0755 "$PREFIX/bin/jaa-desktop"
 fi
 
+# ---- network admin / dashboard (jaa-net) --------------------------------------------------
+if [ -f "$HOME/storage/downloads/jaa-net" ]; then
+	install -m0755 "$HOME/storage/downloads/jaa-net" "$PREFIX/bin/jaa-net"
+	install -m0644 "$HOME/storage/downloads/jaa-net-scan.py" "$PREFIX/bin/jaa-net-scan.py" 2>/dev/null || true
+	# the scanner is loaded from the same dir as jaa-net; keep both in bin
+	sed -i 's#\$SELF_DIR/jaa-net-scan.py#'"$PREFIX"'/bin/jaa-net-scan.py#; s#\$SELF_DIR/dashboard#'"$PREFIX"'/share/jaa-net/dashboard#' "$PREFIX/bin/jaa-net"
+	if [ -d "$HOME/storage/downloads/jaa-net-dashboard" ]; then
+		install -d "$PREFIX/share/jaa-net/dashboard"
+		install -m0644 "$HOME/storage/downloads/jaa-net-dashboard"/* "$PREFIX/share/jaa-net/dashboard/"
+	fi
+	echo "== installed jaa-net (network map + dashboard, authorized-network-only)"
+fi
+
 # ---- WiFi auditor (jaa-wifi) --------------------------------------------------------------
 if [ -f "$HOME/storage/downloads/jaa-wifi" ]; then
 	install -m0755 "$HOME/storage/downloads/jaa-wifi" "$PREFIX/bin/jaa-wifi"
 	install -Dm0644 "$HOME/storage/downloads/wifi-engagement.example.conf" "$PREFIX/share/jaa-wifi/engagement.example.conf" 2>/dev/null || true
 	echo "== installed jaa-wifi (WiFi security auditor, authorized-scope-only)"
 fi
+
+# ---- hacker-vibe login banner (motd) ------------------------------------------------------
+cat > "$HOME/.jaa/motd.sh" <<'MOTD'
+#!/usr/bin/env bash
+g=$'\e[38;5;48m'; c=$'\e[38;5;44m'; d=$'\e[38;5;240m'; b=$'\e[1m'; r=$'\e[0m'
+printf '%s' "$g$b"
+cat <<'ART'
+     ▄▄▄  ▄▄▄   ▄▄▄   ▄▄▄  ▄▄▄
+     █  █ █▄▄█  █▄▄█  █  █ █▄▄
+  ▀▀▀█▄▄█ █  █  █  █  █▄▄█ ▄▄█   m o b i l e
+ART
+printf '%s' "$r"
+ip=$(getprop 2>/dev/null >/dev/null; command -v termux-wifi-connectioninfo >/dev/null && termux-wifi-connectioninfo 2>/dev/null | jq -r '.ip // "-"' 2>/dev/null || echo -)
+printf '  %snode%s %s   %spatch%s %s   %sdevops // sec toolkit online%s\n'   "$d" "$r" "$(uname -m)" "$d" "$r" "$(getprop ro.build.version.security_patch 2>/dev/null || date +%F)" "$c" "$r"
+printf '  %sjaa-net serve%s  network map · %sjaa-wifi audit%s  wifi · %sjaa-audit verify%s  logs\n' "$g" "$r" "$g" "$r" "$g" "$r"
+printf '  %sauthorized use only%s\n\n' "$d" "$r"
+MOTD
+chmod 0755 "$HOME/.jaa/motd.sh"
+grep -qF '.jaa/motd.sh' "$HOME/.bashrc" || printf '\n[ -t 1 ] && [ -x ~/.jaa/motd.sh ] && ~/.jaa/motd.sh   # jaaOS banner\n' >> "$HOME/.bashrc"
 
 cat <<EOF
 
@@ -154,6 +186,7 @@ jaaOS Mobile toolkit installed.
   Audit:    open a new Termux session; every command is logged. Check:  jaa-audit verify
   Alerts:   jaa-alert "deploy finished"      (set JAA_NTFY_URL to also push to ntfy)
   WiFi:     jaa-wifi engagement init   (list YOUR networks)   then   jaa-wifi audit
+  Network:  jaa-net serve   (dashboard at http://127.0.0.1:8088)   ·   jaa-net map   ·   jaa-net watch
 $( [ "$DESKTOP" = 1 ] && echo "  Desktop:  jaa-desktop start   then AVNC -> 127.0.0.1:5901 (run vncpasswd first)" )
 Security tools are for systems you are authorized to test.
 EOF
