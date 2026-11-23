@@ -32,14 +32,18 @@ DEVOPS=(python python-pip nodejs-lts golang rust make cmake clang kubectl helm k
 	httpie postgresql mariadb redis sqlite openjdk-21 maven gradle ruby php perl shellcheck mc)
 SECURITY=(nmap dnsutils ldns whois traceroute mtr iperf3 netcat-openbsd socat openssl-tool iproute2
 	net-tools lsof nethogs tor torsocks proxychains-ng radare2 rizin binwalk gdb strace ltrace termshark
-	iw wireless-tools wpa-supplicant arp-scan)
+	tshark sslscan iw wireless-tools wpa-supplicant arp-scan exiftool yara jadx apktool)
+# VPN / tunnels / full-Linux userland. openvpn + wg-quick are CLI; the GUI VPN apps
+# (OpenVPN for Android, Tailscale->Headscale) come from apps.lock. proot-distro gives a real
+# Debian/Kali chroot where `apt install` works — see jaa-linux.
+NETVPN=(openvpn wireguard-tools openssh-sftp-server proot proot-distro tsu)
 PIP=(ansible-core yamllint)
 DESKTOP_PKGS=(xfce4 tigervnc)
 
 echo "== jaaOS Mobile toolkit: updating Termux"
 pkg update -y
-echo "== base, DevOps and security packages (${#BASE[@]} + ${#DEVOPS[@]} + ${#SECURITY[@]})"
-pkg install -y "${BASE[@]}" "${DEVOPS[@]}" "${SECURITY[@]}"
+echo "== base, DevOps, security and VPN packages (${#BASE[@]} + ${#DEVOPS[@]} + ${#SECURITY[@]} + ${#NETVPN[@]})"
+pkg install -y "${BASE[@]}" "${DEVOPS[@]}" "${SECURITY[@]}" "${NETVPN[@]}"
 echo "== Python tools: ${PIP[*]}"
 pip install --upgrade "${PIP[@]}"
 
@@ -118,6 +122,109 @@ if [ -n "${JAA_NTFY_URL:-}" ]; then curl -fsS -d "$msg" "$JAA_NTFY_URL" >/dev/nu
 TOOL
 chmod 0755 "$PREFIX/bin/jaa-alert"
 
+# ---- jaa-linux: a full Debian/Kali userland (proot-distro) ----------------------------------
+cat > "$PREFIX/bin/jaa-linux" <<'TOOL'
+#!/usr/bin/env bash
+# jaa-linux — a full Linux userland on the phone via proot-distro, where apt works and you can
+# install anything your DevOps/security work needs (nikto, sqlmap, the Kali metapackages, …)
+# that Termux's own repos do not carry. It is YOUR distro — install only what you are authorized
+# to use. No root, no separate partition.
+#   jaa-linux install [debian|ubuntu|kali]   # kali: then `apt install kali-linux-headless`
+#   jaa-linux shell   [debian|ubuntu|kali]   # enter it
+#   jaa-linux list                           # installed distros
+set -euo pipefail
+d="${2:-debian}"
+case "${1:-shell}" in
+	install) proot-distro install "$d" && echo "Installed $d. Enter it with: jaa-linux shell $d" ;;
+	shell)   proot-distro login "$d" 2>/dev/null || { echo "'$d' not installed. Run: jaa-linux install $d" >&2; exit 1; } ;;
+	list)    proot-distro list | sed -n '/Installed/,$p' ;;
+	*) echo "usage: jaa-linux install|shell|list [debian|ubuntu|kali]" >&2; exit 2 ;;
+esac
+TOOL
+chmod 0755 "$PREFIX/bin/jaa-linux"
+
+# ---- jaa-vpn: OpenVPN / WireGuard from the command line --------------------------------------
+cat > "$PREFIX/bin/jaa-vpn" <<'TOOL'
+#!/usr/bin/env bash
+# jaa-vpn — bring a VPN up/down from a config file (needs the VpnService permission; run once
+# with `sudo` or via the OpenVPN/WireGuard apps for the tun device). For a tap-to-connect GUI use
+# the OpenVPN for Android / Tailscale apps (Tailscale -> your Headscale login server).
+#   jaa-vpn up   ~/vpn/client.ovpn      # OpenVPN
+#   jaa-vpn up   ~/vpn/wg0.conf         # WireGuard (.conf)
+#   jaa-vpn down                        # stop whatever is running
+set -euo pipefail
+case "${1:-}" in
+	up)
+		cfg="${2:?usage: jaa-vpn up CONFIG(.ovpn|.conf)}"
+		case "$cfg" in
+			*.ovpn) exec openvpn --config "$cfg" ;;
+			*.conf) exec wg-quick up "$cfg" ;;
+			*) echo "config must end .ovpn (OpenVPN) or .conf (WireGuard)" >&2; exit 2 ;;
+		esac ;;
+	down) pkill -INT openvpn 2>/dev/null; wg-quick down all 2>/dev/null; echo "VPN stopped" ;;
+	*) echo "usage: jaa-vpn up CONFIG | down   (GUI: OpenVPN for Android / Tailscale apps)" >&2; exit 2 ;;
+esac
+TOOL
+chmod 0755 "$PREFIX/bin/jaa-vpn"
+
+# ---- home-screen shortcuts (Termux:Widget) --------------------------------------------------
+# Termux:Widget shows ~/.shortcuts/* as a home-screen widget of one-tap buttons; Termux:Tasker
+# can trigger ~/.shortcuts/tasks/* from Tasker / a Quick-Settings tile. These are the jaaOS
+# "quick actions" for daily DevOps/security work.
+mkdir -p "$HOME/.shortcuts/tasks"
+sc() { install -m0700 /dev/stdin "$HOME/.shortcuts/$1"; }
+sc "net-dashboard"  <<'S'
+#!/usr/bin/env bash
+# Network map + dashboard (http://127.0.0.1:8088)
+am start -a android.intent.action.VIEW -d http://127.0.0.1:8088 >/dev/null 2>&1 &
+exec jaa-net serve
+S
+sc "wifi-audit"     <<'S'
+#!/usr/bin/env bash
+exec jaa-wifi audit
+S
+sc "capture"        <<'S'
+#!/usr/bin/env bash
+# Live packet capture (Wireshark-style TUI). Ctrl+C to stop.
+read -r -p "interface [wlan0]: " i; exec termshark -i "${i:-wlan0}"
+S
+sc "portscan"       <<'S'
+#!/usr/bin/env bash
+read -r -p "target (host/CIDR you are authorized to scan): " t; [ -n "$t" ] && exec nmap -sV -T4 "$t"
+S
+sc "linux-shell"    <<'S'
+#!/usr/bin/env bash
+exec jaa-linux shell debian
+S
+sc "linux-desktop"  <<'S'
+#!/usr/bin/env bash
+jaa-desktop start && am start -a android.intent.action.VIEW -d vnc://127.0.0.1:5901 >/dev/null 2>&1
+echo "desktop on 127.0.0.1:5901 — open it in AVNC"
+S
+sc "openvpn"        <<'S'
+#!/usr/bin/env bash
+am start -n de.blinkt.openvpn/.activities.MainActivity >/dev/null 2>&1 || echo "install OpenVPN for Android"
+S
+sc "tailscale"      <<'S'
+#!/usr/bin/env bash
+# Tailscale / Headscale toggle
+am start -n com.tailscale.ipn/.MainActivity >/dev/null 2>&1 || echo "install Tailscale (point it at your Headscale login server)"
+S
+sc "ssh"            <<'S'
+#!/usr/bin/env bash
+read -r -p "ssh target (user@host): " t; [ -n "$t" ] && exec ssh "$t"
+S
+sc "sshd-on"        <<'S'
+#!/usr/bin/env bash
+sshd && echo "sshd up on port 8022 (keys only). Your IP:"; ifconfig 2>/dev/null | awk '/inet /{print "  "$2}'
+S
+sc "audit-verify"   <<'S'
+#!/usr/bin/env bash
+jaa-audit verify; read -r -p "press enter"
+S
+cp "$HOME/.shortcuts/wifi-audit" "$HOME/.shortcuts/tasks/wifi-audit" 2>/dev/null || true
+cp "$HOME/.shortcuts/sshd-on"   "$HOME/.shortcuts/tasks/sshd-on"   2>/dev/null || true
+
 # ---- optional Linux desktop (XFCE over VNC) -------------------------------------------------
 if [ "$DESKTOP" = 1 ]; then
 	echo "== Linux desktop: XFCE + VNC"
@@ -172,7 +279,7 @@ cat <<'ART'
 ART
 printf '%s' "$r"
 printf '  %snode%s %s   %spatch%s %s   %sdevops // sec toolkit online%s\n'   "$d" "$r" "$(uname -m)" "$d" "$r" "$(getprop ro.build.version.security_patch 2>/dev/null || date +%F)" "$c" "$r"
-printf '  %sjaa-net serve%s  network map · %sjaa-wifi audit%s  wifi · %sjaa-audit verify%s  logs\n' "$g" "$r" "$g" "$r" "$g" "$r"
+printf '  %sjaa-net serve%s map · %sjaa-wifi audit%s wifi · %sjaa-linux shell%s linux · %sjaa-vpn up%s vpn\n' "$g" "$r" "$g" "$r" "$g" "$r" "$g" "$r"
 printf '  %sauthorized use only%s\n\n' "$d" "$r"
 MOTD
 chmod 0755 "$HOME/.jaa/motd.sh"
@@ -186,6 +293,10 @@ jaaOS Mobile toolkit installed.
   Alerts:   jaa-alert "deploy finished"      (set JAA_NTFY_URL to also push to ntfy)
   WiFi:     jaa-wifi engagement init   (list YOUR networks)   then   jaa-wifi audit
   Network:  jaa-net serve   (dashboard at http://127.0.0.1:8088)   ·   jaa-net map   ·   jaa-net watch
+  Linux:    jaa-linux install debian   then   jaa-linux shell   (apt works; add Kali tools yourself)
+  VPN:      jaa-vpn up ~/vpn/client.ovpn   ·   GUI: OpenVPN for Android / Tailscale (-> your Headscale)
+  Capture:  termshark -i wlan0   ·   tshark   ·   PCAPdroid app (no root)
+  Shortcuts: add the Termux:Widget to your home screen — one-tap VPN, dashboard, capture, SSH, Linux
 $( [ "$DESKTOP" = 1 ] && echo "  Desktop:  jaa-desktop start   then AVNC -> 127.0.0.1:5901 (run vncpasswd first)" )
 Security tools are for systems you are authorized to test.
 EOF

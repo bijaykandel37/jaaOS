@@ -153,7 +153,69 @@ below. Leave out `--desktop` if you don't want the Linux desktop.
 | `jaa-audit verify` | checks the command log's hash chain (shows the first edited/removed line) |
 | `jaa-audit ship user@host:logs/` | copies the log off the phone over SSH |
 | `jaa-alert "text"` | phone notification; also pushes to ntfy when `JAA_NTFY_URL` is set |
+| `jaa-linux install debian` / `jaa-linux shell` | a full Debian/Kali userland (see below) |
+| `jaa-vpn up ~/vpn/client.ovpn` | bring an OpenVPN/WireGuard tunnel up from a config (`down` to stop) |
 | `jaa-desktop start` | XFCE desktop on `127.0.0.1:5901`; open it in **AVNC** (run `vncpasswd` once first) |
+
+### Tools on the phone (verified present in Termux's repos)
+
+The toolkit installs, by default, assessment and DevOps tools only — **no exploit frameworks or
+brute-forcers** (jaaOS policy; most are not in Termux's repos anyway):
+
+- **Recon / network:** `nmap`, `arp-scan`, `tshark` + `termshark` (a Wireshark-style TUI), `tcpdump`,
+  `sslscan` (TLS testing for your sites), `dig`/`host`, `whois`, `mtr`, `nmap`'s safe NSE, `nethogs`,
+  `socat`, `nc`, `iperf3`, `proxychains-ng`, `tor`.
+- **Analysis / RE:** `radare2`, `rizin`, `binwalk`, `gdb`, `strace`, `ltrace`, `exiftool`, `yara`,
+  `jadx` + `apktool` (APK reversing), `frida`.
+- **DevOps:** `kubectl`, `helm`, `k9s`, `gh`, `git`, `awscli`, `doctl`, `ansible`, `terraform`-via-apt
+  (see jaa-linux), Go/Rust/Python/Node/Java toolchains, Postgres/MariaDB/Redis clients, `httpie`.
+- **VPN / tunnels:** `openvpn`, `wg-quick` (WireGuard), `ssh`/`sshd` (keys only, port 8022), `mosh`.
+
+### A full Linux (apt) with `jaa-linux`
+
+Termux's repos leave out heavier pentest tools (`nikto`, `sqlmap`, `nuclei`, the Kali
+metapackages). For those, run a real distro in a `proot` (no root, no partitioning):
+
+```bash
+jaa-linux install debian
+```
+
+```bash
+jaa-linux shell debian
+```
+
+Inside it `apt` works, so install whatever your authorized work needs. For a Kali toolset:
+
+```bash
+jaa-linux install kali
+```
+
+then inside: `apt update && apt install kali-linux-headless`. This is **your** distro — jaaOS
+ships none of those tools itself; use them only on systems you are authorized to test.
+
+### VPN and Headscale
+
+- **OpenVPN / WireGuard, CLI:** `jaa-vpn up ~/vpn/client.ovpn` (or a `.conf` for WireGuard).
+- **GUI, tap-to-connect:** the **OpenVPN for Android** and **Tailscale** apps are installed from
+  `apps.lock`. For your **Headscale** server, open Tailscale → menu → **Change server /
+  Use alternate server** and enter your Headscale URL (e.g. `https://hs.example.com`), then sign
+  in. WireGuard's own app (not on F-Droid) can be added from its F-Droid repo or via Aurora.
+
+### Packet capture (Wireshark-style)
+
+- On the phone, no root: the **PCAPdroid** app captures per-app traffic and writes a `.pcap` you
+  can open in Wireshark on a PC, or decode live.
+- In Termux: `termshark -i wlan0` (TUI) or `tshark` (CLI). Capturing others' traffic needs
+  root/monitor mode and is an attack unless it is your own traffic or an authorized engagement.
+
+### Home-screen shortcuts & Quick-Settings (the "drag-down" actions)
+
+The toolkit writes one-tap scripts to `~/.shortcuts/`. Add the **Termux:Widget** to your home
+screen (long-press home → Widgets → Termux:Widget) and you get buttons for: **net-dashboard**,
+**wifi-audit**, **capture**, **portscan**, **linux-shell**, **linux-desktop**, **openvpn**,
+**tailscale**, **ssh**, **sshd-on**, **audit-verify**. For an actual **Quick-Settings tile** (the
+drag-down menu), install **Termux:Tasker** (in `apps.lock`) + Tasker (or an FOSS tile app) and
+point a tile at `~/.shortcuts/tasks/<name>`. Edit or add your own scripts in `~/.shortcuts/`.
 
 Desktop on a big screen: pair a Bluetooth keyboard and mouse and use AVNC on the phone, or
 from a computer on the same network:
