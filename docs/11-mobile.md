@@ -130,8 +130,9 @@ derivative if you want the work done for you. GrapheneOS and CalyxOS do not supp
 1. Check that your exact model is on the LineageOS devices list
    (https://wiki.lineageos.org/devices/). If it is not, path B is not realistic.
 2. Back up everything. Unlocking wipes the phone and trips Knox permanently (see the table above).
-3. Follow that device's LineageOS install guide (it uses Odin/Heimdall + a custom recovery;
-   Debian packages the Linux flasher as `heimdall-flash`).
+3. Follow that device's LineageOS install guide: it names the flasher for that model. Current
+   Samsung guides (the A71 included) use **samloader-rs** in Download mode; some older ones still
+   use Heimdall.
 4. To build a jaaOS-flavoured image instead of the official one: build LineageOS for the device
    (LineageOS "Build for <device>" guide, a 300 GB / 32 GB RAM machine), adding
    `mobile/rom/overlay` as a product overlay.

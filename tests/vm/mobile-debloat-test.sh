@@ -36,7 +36,21 @@ case "$*" in
 	"getprop ro.build.version.release") echo "${FAKE_ANDROID:-14}" ;;
 	"getprop ro.lineage.version") echo "${FAKE_LINEAGE:-}" ;;
 	"getprop sys.oem_unlock_allowed") echo "${FAKE_OEMUNLOCK:-0}" ;;
-	"dumpsys account") [ "${FAKE_GACCT:-0}" = 1 ] && echo "    Account {name=me@gmail.com, type=com.google}" ;;
+	"dumpsys account")
+		[ "${FAKE_GACCT:-0}" = 1 ] && echo "    Account {name=me@gmail.com, type=com.google}"
+		# Shape of a real A71 dump: 2 Google accounts, other account types, and the
+		# authenticator list (which must not be counted as accounts).
+		[ "${FAKE_GACCT:-0}" = real ] && printf '%s\n' \
+			"User UserInfo{0:Owner:c13}:" "  Accounts: 4" \
+			"    Account {name=a@gmail.com, type=com.google}" \
+			"    Account {name=b@gmail.com, type=com.google}" \
+			"    Account {name=+15550100, type=com.google.android.apps.tachyon}" \
+			"    Account {name=me, type=com.whatsapp}" \
+			"  RegisteredServicesCache: 3 services" \
+			"    ServiceInfo: AuthenticatorDescription {type=com.google}, ComponentInfo{com.google.android.gms/x}, uid 10236" \
+			"    ServiceInfo: AuthenticatorDescription {type=com.google.android.gm.pop3}, ComponentInfo{com.google.android.gm/y}, uid 10247" \
+			"    ServiceInfo: AuthenticatorDescription {type=com.google.work}, ComponentInfo{com.google.android.gms/z}, uid 10236"
+		;;
 	"dumpsys battery") echo "  level: ${FAKE_BATTERY:-80}" ;;
 	"getprop ro.boot.flash.locked") echo 1 ;;
 	"pm list packages")
@@ -129,6 +143,8 @@ out="$(env "${A71[@]}" FAKE_ANDROID=12 bash "$CLI" rom-check 2>&1)"; rc=$?
 check "wrong stock firmware fails" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'needs stock Android 13'" "$out"
 out="$(env "${A71[@]}" FAKE_GACCT=1 bash "$CLI" rom-check 2>&1)"; rc=$?
 check "Google account (FRP) fails" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'Google account'" "$out"
+out="$(env "${A71[@]}" FAKE_GACCT=real bash "$CLI" rom-check 2>&1)"; rc=$?
+check "counts Google accounts, not authenticators (regression)" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'FAIL  2 Google account'" "$out"
 out="$(env "${A71[@]}" FAKE_OEMUNLOCK=0 bash "$CLI" rom-check 2>&1)"; rc=$?
 check "OEM unlocking off fails" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'OEM unlocking is off'" "$out"
 out="$(env "${A71[@]}" FAKE_MODEL=SM-A716B bash "$CLI" rom-check 2>&1)"; rc=$?

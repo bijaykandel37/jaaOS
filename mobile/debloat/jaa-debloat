@@ -249,7 +249,9 @@ cmd_rom_check() {
 	else echo "FAIL  stock firmware is Android $rel; LineageOS needs stock Android $need firmware first"; fails=$((fails + 1)); fi
 	if [ "$unlock" = 1 ]; then echo "PASS  OEM unlocking is allowed"
 	else echo "FAIL  OEM unlocking is off: Settings > Developer options > OEM unlocking (connect to Wi-Fi first)"; fails=$((fails + 1)); fi
-	local gacc; gacc="$(phone dumpsys account | grep -c 'type=com.google' || true)"
+	# Count account entries only: `type=com.google` alone also matches the authenticator list
+	# (com.google.android.gm.pop3, …tachyon) and so over-counts. Covers every user/profile.
+	local gacc; gacc="$(phone dumpsys account | grep -cE '^[[:space:]]*Account \{name=.*, type=com\.google\}[[:space:]]*$' || true)"
 	if [ "${gacc:-0}" -eq 0 ]; then echo "PASS  no Google account on the phone (no factory-reset-protection lock)"
 	else echo "FAIL  $gacc Google account(s) present: remove them (Settings > Accounts) or the phone locks after the wipe"; fails=$((fails + 1)); fi
 	local bat; bat="$(phone dumpsys battery | sed -n 's/^ *level: *//p' | head -1)"
