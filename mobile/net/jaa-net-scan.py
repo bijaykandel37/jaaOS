@@ -113,35 +113,46 @@ def main():
         if ip:
             hosts.setdefault(ip, {"ip": ip, "mac": neigh.get(ip, ""), "vendor": "", "hostname": "", "open_ports": []})
 
-    base = {}
+    base_list = []
     if a.baseline and os.path.exists(a.baseline):
         try:
-            for d in json.load(open(a.baseline)).get("devices", []):
-                key = d.get("mac") or d.get("ip")
-                base[key] = d
+            base_list = json.load(open(a.baseline)).get("devices", [])
         except (ValueError, OSError):
-            base = {}
+            base_list = []
+    # Index the baseline by BOTH mac and ip. Unrooted scans often miss the MAC, so a device may
+    # be known by mac one scan and only by ip the next; matching on either keeps it as the same
+    # device instead of reporting a false "left + joined".
+    base_by_mac = {d["mac"]: d for d in base_list if d.get("mac")}
+    base_by_ip = {d["ip"]: d for d in base_list if d.get("ip")}
 
     devices = []
+    cur_macs, cur_ips = set(), set()
     for ip, d in hosts.items():
         if not d.get("vendor"):
             d["vendor"] = vendor_for(d.get("mac", ""), oui)
         d["hostname"] = html.unescape(d.get("hostname", ""))
         d["is_gateway"] = (ip == a.gateway)
         d["is_self"] = (ip == a.self)
-        key = d.get("mac") or ip
-        prev = base.get(key)
+        mac = d.get("mac", "")
+        prev = (base_by_mac.get(mac) if mac else None) or base_by_ip.get(ip)
         if prev is None:
             d["status"] = "new"; d["first_seen"] = now
         else:
             d["first_seen"] = prev.get("first_seen", now)
             d["status"] = "known"
+            # Carry ports forward from a heavier earlier scan, so a light host-discovery refresh
+            # (jaa-net serve/watch) does not blank a known device's open ports.
+            if not d.get("open_ports") and prev.get("open_ports"):
+                d["open_ports"] = prev["open_ports"]
         d["last_seen"] = now
+        if mac:
+            cur_macs.add(mac)
+        cur_ips.add(ip)
         devices.append(d)
 
-    # Devices in the baseline but not seen now = left the network.
-    seen = {(d.get("mac") or d["ip"]) for d in devices}
-    left = [k for k in base if k not in seen]
+    # A baseline device has left only if NEITHER its mac nor its ip is seen now.
+    left = [d for d in base_list
+            if not ((d.get("mac") and d["mac"] in cur_macs) or (d.get("ip") and d["ip"] in cur_ips))]
 
     def sort_key(d):
         try:
@@ -159,7 +170,7 @@ def main():
             "with_open_ports": sum(1 for d in devices if d["open_ports"]),
         },
         "devices": devices,
-        "left": [base[k] for k in left],
+        "left": left,
     }
     json.dump(out, sys.stdout, indent=2)
     print()

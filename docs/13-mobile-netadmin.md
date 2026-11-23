@@ -69,7 +69,8 @@ Starts the **dashboard** at `http://127.0.0.1:8088` — open it in the phone's b
 laptop through an SSH tunnel:
 
 ```bash
-ssh -p 8022 -L 8088:127.0.0.1:8088 <phone-ip>
+PHONE=192.168.1.50   # your phone's WiFi IP — jaa-net map shows it as the [ME] device
+ssh -p 8022 -L 8088:127.0.0.1:8088 "$PHONE"
 ```
 
 then open `http://localhost:8088`. It live-updates, lets you filter by ip/mac/vendor/host/port,

@@ -64,13 +64,31 @@ discover_self() {
 	return 0
 }
 
-# The connected network must be authorized (by SSID, BSSID, or subnet). Exclusions win.
+# Does $NET_IP fall inside any of the given CIDR subnets? (proper containment, not string match)
+ip_in_subnets() { # <subnet...>
+	[ -n "$NET_IP" ] && [ $# -gt 0 ] || return 1
+	python3 -I -c '
+import ipaddress, sys
+try: ip = ipaddress.ip_address(sys.argv[1])
+except ValueError: sys.exit(1)
+for net in sys.argv[2:]:
+    try:
+        if ip in ipaddress.ip_network(net, strict=False): sys.exit(0)
+    except ValueError: pass
+sys.exit(1)' "$NET_IP" "$@" 2>/dev/null
+}
+
+# The connected network must be authorized (by SSID, BSSID, or subnet). Exclusions always win.
 network_authorized() {
-	local x
+	local x subs=()
+	# --- exclusions first (they win over any scope entry) ---
 	while IFS= read -r x; do [ -n "$x" ] && [ "$x" = "$NET_SSID" ] && { echo "the connected network '$NET_SSID' is in EXCLUDE_SSIDS"; return 1; }; done < <(eng_list EXCLUDE_SSIDS)
+	while IFS= read -r x; do [ -n "$x" ] && [ -n "$NET_BSSID" ] && [ "$(norm_mac "$x")" = "$(norm_mac "$NET_BSSID")" ] && { echo "the connected AP ($NET_BSSID) is in EXCLUDE_BSSIDS"; return 1; }; done < <(eng_list EXCLUDE_BSSIDS)
+	mapfile -t subs < <(eng_list EXCLUDE_SUBNETS); [ "${#subs[@]}" -eq 0 ] || ! ip_in_subnets "${subs[@]}" || { echo "the connected subnet ($NET_CIDR) is in EXCLUDE_SUBNETS"; return 1; }
+	# --- scope ---
 	while IFS= read -r x; do [ -n "$x" ] && [ "$x" = "$NET_SSID" ] && return 0; done < <(eng_list SCOPE_SSIDS)
-	while IFS= read -r x; do [ -n "$x" ] && [ "$(norm_mac "$x")" = "$(norm_mac "$NET_BSSID")" ] && return 0; done < <(eng_list SCOPE_BSSIDS)
-	while IFS= read -r x; do [ -n "$x" ] && [ "$x" = "$NET_CIDR" ] && return 0; done < <(eng_list SCOPE_SUBNETS)
+	while IFS= read -r x; do [ -n "$x" ] && [ -n "$NET_BSSID" ] && [ "$(norm_mac "$x")" = "$(norm_mac "$NET_BSSID")" ] && return 0; done < <(eng_list SCOPE_BSSIDS)
+	mapfile -t subs < <(eng_list SCOPE_SUBNETS); [ "${#subs[@]}" -eq 0 ] || ! ip_in_subnets "${subs[@]}" || return 0
 	echo "the connected network (ssid='${NET_SSID:-?}', subnet='${NET_CIDR:-?}') is not in your engagement scope (SCOPE_SSIDS/SCOPE_BSSIDS/SCOPE_SUBNETS). Add it only if you own or are authorized to manage it."
 	return 1
 }
@@ -105,10 +123,13 @@ run_scan() {
 		nmap "${args[@]}" -oX "$xml" "$NET_CIDR" >/dev/null 2>&1 || warn "nmap returned non-zero"
 		have ip && ip neigh > "$neigh" 2>/dev/null || true
 	fi
-	python3 -I "$SELF_DIR/jaa-net-scan.py" --xml "$xml" --neigh "$neigh" \
+	local out rc
+	if out="$(python3 -I "$SELF_DIR/jaa-net-scan.py" --xml "$xml" --neigh "$neigh" \
 		${OUI:+--oui "$OUI"} --self "$NET_IP" --gateway "$NET_GW" --ssid "$NET_SSID" \
-		${JAA_NET_NO_BASELINE:+} --baseline "$BASELINE"
-	local rc=$?; rm -f "$xml" "$neigh"; return $rc
+		--baseline "$BASELINE")"; then rc=0; else rc=$?; fi
+	rm -f "$xml" "$neigh"            # always clean up, even when the scanner failed
+	printf '%s\n' "$out"
+	return "$rc"
 }
 
 print_table() { # reads the scan JSON on stdin
@@ -176,18 +197,20 @@ cmd_watch() {
 
 cmd_serve() {
 	while [ $# -gt 0 ]; do case "$1" in --port) PORT="${2:-}"; shift 2;; *) die "unknown option: $1";; esac; done
-	[[ "$PORT" =~ ^[1-9][0-9]{2,4}$ ]] || die "--port"
+	{ [[ "$PORT" =~ ^[0-9]{1,5}$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; } || die "--port must be 1-65535 (default 8088)"
 	preflight; audit "serve dashboard on 127.0.0.1:$PORT"
 	[ -f "$DASHBOARD/index.html" ] || die "dashboard files missing ($DASHBOARD)"
 	local web; web="$(mktemp -d)"; cp "$DASHBOARD"/* "$web/"
 	run_scan ports > "$web/data.json" || true
 	cp "$web/data.json" "$BASELINE" 2>/dev/null || true
-	# Refresh data.json in the background while the page is open.
-	( while :; do sleep "${JAA_NET_INTERVAL:-30}"; run_scan ports > "$web/data.json.tmp" 2>/dev/null && mv "$web/data.json.tmp" "$web/data.json"; done ) &
+	# Refresh with light host-discovery only (not a full port scan) while the page is open;
+	# ports found by the initial scan are carried forward per device by jaa-net-scan.py.
+	( while :; do sleep "${JAA_NET_INTERVAL:-30}"; run_scan > "$web/data.json.tmp" 2>/dev/null && mv "$web/data.json.tmp" "$web/data.json"; done ) &
 	local refresher=$!
 	trap 'kill $refresher 2>/dev/null; rm -rf "$web"' EXIT
 	echo "jaaOS network dashboard: http://127.0.0.1:$PORT  (open it in your browser; Ctrl+C to stop)"
-	echo "From a laptop:  ssh -p 8022 -L $PORT:127.0.0.1:$PORT <phone-ip>  then open http://localhost:$PORT"
+	echo "From a laptop (set PHONE to this phone's WiFi IP, the [ME] device in 'jaa-net map'):"
+	echo "  ssh -p 8022 -L $PORT:127.0.0.1:$PORT \"\$PHONE\"   then open http://localhost:$PORT"
 	( cd "$web" && python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1 )
 }
 

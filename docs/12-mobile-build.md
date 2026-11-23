@@ -162,7 +162,7 @@ from a computer on the same network:
 ssh -p 8022 -L 5901:127.0.0.1:5901 192.168.1.50
 ```
 
-then point a VNC viewer at `localhost:5901` (replace 192.168.1.50 with the phone's IP).
+then point a VNC viewer at `localhost:5901`. Replace 192.168.1.50 with your phone's WiFi IP (the [ME] device in `jaa-net map`).
 
 ## Step 6 — Two PINs, two workspaces
 

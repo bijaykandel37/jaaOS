@@ -171,7 +171,6 @@ cat <<'ART'
   ▀▀▀█▄▄█ █  █  █  █  █▄▄█ ▄▄█   m o b i l e
 ART
 printf '%s' "$r"
-ip=$(getprop 2>/dev/null >/dev/null; command -v termux-wifi-connectioninfo >/dev/null && termux-wifi-connectioninfo 2>/dev/null | jq -r '.ip // "-"' 2>/dev/null || echo -)
 printf '  %snode%s %s   %spatch%s %s   %sdevops // sec toolkit online%s\n'   "$d" "$r" "$(uname -m)" "$d" "$r" "$(getprop ro.build.version.security_patch 2>/dev/null || date +%F)" "$c" "$r"
 printf '  %sjaa-net serve%s  network map · %sjaa-wifi audit%s  wifi · %sjaa-audit verify%s  logs\n' "$g" "$r" "$g" "$r" "$g" "$r"
 printf '  %sauthorized use only%s\n\n' "$d" "$r"
