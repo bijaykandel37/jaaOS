@@ -212,23 +212,40 @@ EOF
 # It changes nothing: unlocking and flashing stay manual, step by step, from the device guide.
 cmd_rom_check() {
 	select_device
-	local code model rel unlock row models need lineage guide fails=0
+	local code model rel unlock fails=0 info
 	code="$(prop ro.product.device)"; model="$(prop ro.product.model)"; rel="$(prop ro.build.version.release)"
 	unlock="$(prop sys.oem_unlock_allowed)"
-	row="$(awk -F'|' -v c="$code" '$0 !~ /^[[:space:]]*#/ { k = $1; gsub(/^[ \t]+|[ \t]+$/, "", k); if (k == c) print }' "$DEVICES" 2>/dev/null | head -1)"
 	echo "phone: $model (codename $code), Android $rel"
-	if [ -z "$row" ]; then
-		echo "FAIL  no documented LineageOS build for '$code' in $DEVICES — stay on path A (debloat)."
+	# Look the phone up in the official LineageOS metadata — works for ANY supported device.
+	local LDI="$SELF_DIR/../devices/lineage-device-info"
+	info="$(JAA_DEVICE_SUPPORTED="$DEVICES" bash "$LDI" "$code" 2>/dev/null || true)"
+	if [ -z "$info" ]; then
+		echo "FAIL  no official LineageOS build for codename '$code' (checked the LineageOS device list)."
+		echo "      Your phone may still be de-Googled on its stock firmware — stay on path A (jaa-debloat)."
 		return 1
 	fi
-	IFS='|' read -r _ models need lineage guide <<<"$row"
-	models="$(xargs <<<"$models")"; need="$(xargs <<<"$need")"; lineage="$(xargs <<<"$lineage")"; guide="$(xargs <<<"$guide")"
-	echo "build: LineageOS $lineage — guide: $guide"
+	local name vendor models need lineage quirks url curated
+	name="$(sed -n 's/^NAME=//p' <<<"$info")"; vendor="$(sed -n 's/^VENDOR=//p' <<<"$info")"
+	models="$(sed -n 's/^MODELS=//p' <<<"$info")"; need="$(sed -n 's/^REQ_ANDROID=//p' <<<"$info")"
+	lineage="$(sed -n 's/^LINEAGE_VERSIONS=//p' <<<"$info")"; quirks="$(sed -n 's/^QUIRKS=//p' <<<"$info")"
+	url="$(sed -n 's/^INFO_URL=//p' <<<"$info")"; curated="$(sed -n 's/^CURATED=//p' <<<"$info")"
+	echo "build: ${vendor:+$vendor }${name:-$code} — LineageOS ${lineage:-?} — install guide: ${url}"
+	[ "$curated" = yes ] && echo "       (jaaOS has a tested device guide: mobile/devices/$code.md)" \
+		|| echo "       (jaaOS install flow is generic for this device; follow the official guide above for the flashing steps)"
 	local base="${model%%/*}" m match=0
-	for m in $models; do [ "${m%%/*}" = "$base" ] && match=1; done
-	if [ "$match" = 1 ]; then echo "PASS  model $model is supported ($models)"
-	else echo "FAIL  model $model is not one of: $models (do NOT flash)"; fails=$((fails + 1)); fi
-	if [ "${rel%%.*}" = "$need" ]; then echo "PASS  stock firmware is Android $rel (required: $need)"
+	if [ -n "$models" ]; then
+		# Samsung lists model numbers (SM-A715F…) that match ro.product.model; Google/others list
+		# the codename itself. We already looked the phone up by its own codename, so a models list
+		# that is codename-style is a valid match.
+		for m in $models; do
+			[ "${m%%/*}" = "$base" ] && match=1
+			[ "$m" = "$code" ] && match=1
+		done
+		if [ "$match" = 1 ]; then echo "PASS  model $model is supported ($models)"
+		else echo "FAIL  model $model is not one of the supported models: $models (do NOT flash)"; fails=$((fails + 1)); fi
+	else echo "WARN  could not read the supported model list — verify your exact model on $url before flashing"; fi
+	if [ -z "$need" ]; then echo "WARN  required stock firmware unknown — the install guide states it"
+	elif [ "${rel%%.*}" = "$need" ]; then echo "PASS  stock firmware is Android $rel (required: $need)"
 	else echo "FAIL  stock firmware is Android $rel; LineageOS needs stock Android $need firmware first"; fails=$((fails + 1)); fi
 	if [ "$unlock" = 1 ]; then echo "PASS  OEM unlocking is allowed"
 	else echo "FAIL  OEM unlocking is off: Settings > Developer options > OEM unlocking (connect to Wi-Fi first)"; fails=$((fails + 1)); fi
@@ -239,11 +256,11 @@ cmd_rom_check() {
 	if [ "${bat:-0}" -ge 50 ]; then echo "PASS  battery ${bat}%"
 	else echo "FAIL  battery ${bat:-?}% — charge to at least 50% before flashing"; fails=$((fails + 1)); fi
 	echo
-	echo "Read before you decide (details in $guide):"
-	echo "  - unlocking WIPES the phone and trips Knox for good (Secure Folder, Samsung Pass/Wallet stop working)"
-	echo "  - no VoLTE / Wi-Fi calling on LineageOS for this phone: calls use 2G/3G — check your carrier still has them"
-	echo "  - apps that require Play Integrity (some banks) will not work; Samsung's camera processing is gone"
-	[ "$fails" -eq 0 ] && echo "READY: all checks passed. Follow the guide step by step; this tool flashes nothing."
+	echo "Read before you decide:"
+	echo "  - unlocking WIPES the phone; on Samsung it also trips Knox permanently (Secure Folder / Samsung Pass stop working)"
+	case " $quirks " in *" ims "*) echo "  - KNOWN QUIRK (ims): no VoLTE / Wi-Fi calling on LineageOS for this phone — calls use 2G/3G; check your carrier still runs them";; esac
+	echo "  - apps requiring Play Integrity (some banks) may not work; the vendor camera app/processing is gone"
+	[ "$fails" -eq 0 ] && echo "READY: all checks passed. Follow the official guide step by step; this tool flashes nothing."
 	[ "$fails" -eq 0 ]
 }
 

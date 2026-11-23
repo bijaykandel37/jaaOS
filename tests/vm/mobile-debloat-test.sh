@@ -115,7 +115,8 @@ out="$(bash "$CLI" workspace 2>&1)"
 check "workspace reports Secure Folder available" sh -c "echo \"\$0\" | grep -q 'Secure Folder:  available'" "$out"
 
 echo "== rom-check (Galaxy A71) =="
-A71=(FAKE_CODE=a71 FAKE_MODEL=SM-A715F FAKE_ANDROID=13 FAKE_OEMUNLOCK=1 FAKE_GACCT=0 FAKE_BATTERY=80)
+# JAA_DEVICE_OFFLINE=1 keeps rom-check off the network in CI (resolves a71 from supported.txt).
+A71=(JAA_DEVICE_OFFLINE=1 FAKE_CODE=a71 FAKE_MODEL=SM-A715F FAKE_ANDROID=13 FAKE_OEMUNLOCK=1 FAKE_GACCT=0 FAKE_BATTERY=80)
 : > "$LOG"
 out="$(env "${A71[@]}" bash "$CLI" rom-check 2>&1)"; rc=$?
 check "A71 ready: all checks pass" sh -c "[ $rc -eq 0 ] && echo \"\$0\" | grep -q READY" "$out"
@@ -134,8 +135,8 @@ out="$(env "${A71[@]}" FAKE_MODEL=SM-A716B bash "$CLI" rom-check 2>&1)"; rc=$?
 check "A71 5G model (SM-A716B) refused" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'do NOT flash'" "$out"
 out="$(env "${A71[@]}" FAKE_BATTERY=20 bash "$CLI" rom-check 2>&1)"; rc=$?
 check "low battery fails" test $rc -ne 0
-out="$(bash "$CLI" rom-check 2>&1)"; rc=$?
-check "undocumented phone -> stay on path A" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'stay on path A'" "$out"
+out="$(JAA_DEVICE_OFFLINE=1 FAKE_CODE=notarealdevice99 bash "$CLI" rom-check 2>&1)"; rc=$?
+check "phone with no LineageOS build -> stay on path A" sh -c "[ $rc -ne 0 ] && echo \"\$0\" | grep -q 'path A'" "$out"
 
 echo "== LineageOS: apply refuses =="
 : > "$LOG"

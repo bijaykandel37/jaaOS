@@ -1,8 +1,21 @@
 # jaaOS Mobile — build, verify and install it on a Galaxy A71
 
 This is the complete procedure, from an empty computer to a working jaaOS Mobile phone, plus what
-was actually tested and what this phone cannot do. Device: **Samsung Galaxy A71, SM-A715F**
-(also /DS, /DSN, /DSM). Never use these files on the A71 5G (SM-A716*).
+was actually tested and what this phone cannot do. The worked example is the **Samsung Galaxy A71,
+SM-A715F** (also /DS, /DSN, /DSM; never the A71 5G, SM-A716*), but the flow works on **any phone
+with an official LineageOS build**.
+
+### Works on other phones
+
+The jaaOS layer (apps, toolkit, hardening) is device-independent; only the *flashing* differs per
+phone, and that comes from the official LineageOS guide. `jaa-debloat rom-check` looks your phone
+up **live** in the LineageOS device list (`mobile/devices/lineage-device-info`), so it tells you —
+for a Pixel, Fairphone, OnePlus, Xiaomi, Motorola, Samsung… — the supported models, the required
+stock Android version, known quirks (e.g. no VoLTE), and whether OEM unlocking is on. The A71 has a
+*tested* jaaOS device guide (`mobile/devices/a71.md`); other devices get the same checks and are
+marked "generic flow — follow the official guide for the flashing steps". Pick a phone with an
+easily-unlockable bootloader (Pixel/Fairphone/OnePlus are the smoothest; many Samsungs work; US
+carrier models and most post-2025 Samsungs cannot unlock at all).
 
 ## What jaaOS Mobile is
 
@@ -142,6 +155,13 @@ termux-setup-storage
 
 ```bash
 bash ~/storage/downloads/jaa-devsec-setup.sh --desktop
+```
+
+For a **lightweight, fast** setup, install a small core instead of the full ~95-package toolkit
+(add more later with `pkg install <name>` or a whole distro with `jaa-linux`):
+
+```bash
+MINIMAL=1 bash ~/storage/downloads/jaa-devsec-setup.sh
 ```
 
 This installs the toolkit (`mobile/termux/jaa-devsec-setup.sh` lists every package), turns on SSH
@@ -315,6 +335,29 @@ test, you install the standard tools yourself in Termux's root repo
 (`aircrack-ng`, `reaver`, `pixiewps`, `hcxdumptool` — some are only in community repos) and drive
 the external adapter. Record the authorization in your `wifi-engagement.conf` first.
 `jaa-wifi` stays assessment-only on purpose: it tells you what to fix, it does not break in.
+
+## Step 8c — Harden the security settings (`jaa-harden`)
+
+From the computer, score the phone's security posture and fix the safe settings. It configures
+Android's own privacy/security options — it does not touch the bootloader, your data or your apps.
+
+```bash
+mobile/jaa-harden audit
+```
+
+```bash
+mobile/jaa-harden apply
+```
+
+`audit` is read-only and prints `PASS`/`WARN`/`FAIL` for each check with a score: storage
+encryption, SELinux enforcing, security-patch freshness, network ADB off, app-install
+verification (including sideloaded APKs), no Google Play Services, Google connectivity-check off,
+**encrypted DNS (DNS-over-TLS)**, always-on VPN + lockdown, lock-screen notification privacy, and
+whether Developer options / USB debugging are still on. `apply` (asks you to type `APPLY`) sets
+the safe ones: DoT to a privacy/malware-blocking resolver (`--dns dns.quad9.net` by default),
+disables the Google connectivity ping, hides lock-screen notification content, and requires
+install verification. Re-run `audit` to confirm. When you are done with these USB tools, turn
+**off** Settings → Developer options → USB debugging.
 
 ## Step 9 — Updates
 

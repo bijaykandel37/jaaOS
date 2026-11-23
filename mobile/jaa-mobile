@@ -214,10 +214,11 @@ Done. Finish on the phone (these steps need you, by design):
   1. Termux: run   termux-setup-storage   then   bash ~/storage/downloads/jaa-devsec-setup.sh
   2. FMD (remote wipe): open FMD, grant device admin, set a PIN; then "wipe" is an SMS command
      from a trusted number (see docs/12-mobile-build.md, "Remote wipe").
-  3. Second workspace: Settings > Security & privacy > Private space (own PIN/pattern), or
+  3. Harden the phone's security settings:   jaa-harden audit   then   jaa-harden apply
+  4. Second workspace: Settings > Security & privacy > Private space (own PIN/pattern), or
      Settings > System > Multiple users. See:  jaa-mobile workspace
 EOF
-	[ "$FLAVOR" = microg ] && echo "  4. microG: open microG Settings > Self-Check, grant everything; enable Cloud Messaging."
+	[ "$FLAVOR" = microg ] && echo "  5. microG: open microG Settings > Self-Check, grant everything; enable Cloud Messaging."
 	return 0
 }
 

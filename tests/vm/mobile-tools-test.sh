@@ -139,6 +139,14 @@ check "desktop VNC is localhost-only" grep -q -- '-localhost yes' "$T/usr/bin/ja
 run_setup >/dev/null 2>&1
 check "re-run does not duplicate the .bashrc hook" test "$(grep -c 'jaa/audit.bash' "$T/home/.bashrc")" = 1
 
+echo "== MINIMAL tier (lightweight) =="
+T2="$SBX/termux-min"; mkdir -p "$T2/home" "$T2/usr/bin" "$T2/fakebin"
+for c in pkg pip sv-enable; do printf '#!/usr/bin/env bash\necho "%s $*" >> "%s/calls.log"\n' "$c" "$T2" > "$T2/fakebin/$c"; chmod +x "$T2/fakebin/$c"; done
+HOME="$T2/home" PREFIX="$T2/usr" PATH="$T2/fakebin:$PATH" JAA_TERMUX_TEST=1 MINIMAL=1 bash "$TSETUP" >/dev/null 2>&1
+check "MINIMAL installs the small core (nmap, git, openssh)" sh -c "grep '^pkg install' '$T2/calls.log' | grep -wq nmap && grep '^pkg install' '$T2/calls.log' | grep -wq openssh"
+check "MINIMAL skips the heavy toolkit (no kubectl/radare2)" sh -c "! grep '^pkg install' '$T2/calls.log' | grep -qwE 'kubectl|radare2|postgresql'"
+check "MINIMAL still installs jaa-linux + shortcuts" sh -c "[ -x '$T2/usr/bin/jaa-linux' ] && [ -x '$T2/home/.shortcuts/wifi-audit' ]"
+
 echo "== Termux audit log (real interactive bash) =="
 HOME="$T/home" PATH="$T/usr/bin:$PATH" bash --rcfile "$T/home/.bashrc" -i >/dev/null 2>&1 <<'EOF'
 echo first

@@ -3,8 +3,12 @@
 # Pushed to the phone by `jaa-mobile setup`. On the phone, in Termux:
 #
 #   termux-setup-storage
-#   bash ~/storage/downloads/jaa-devsec-setup.sh            # toolkit + SSH + audit log + alerts
+#   bash ~/storage/downloads/jaa-devsec-setup.sh            # full toolkit + SSH + audit log + alerts
+#   MINIMAL=1 bash ~/storage/downloads/jaa-devsec-setup.sh  # lightweight core only (fast, small)
 #   bash ~/storage/downloads/jaa-devsec-setup.sh --desktop  # + XFCE Linux desktop (over VNC)
+#
+# MINIMAL=1 installs a small core (git, ssh, nmap, python, tmux, jq …) instead of the ~95-package
+# full toolkit; add more later with `pkg install <name>` or a full distro with `jaa-linux`.
 #
 # Every package name below was checked against the Termux package index (aarch64) on 2026-11-22.
 # Security tools are for AUTHORIZED assessment only (same rule as jaaOS's jaa-scan): network
@@ -40,12 +44,21 @@ NETVPN=(openvpn wireguard-tools openssh-sftp-server proot proot-distro tsu)
 PIP=(ansible-core yamllint)
 DESKTOP_PKGS=(xfce4 tigervnc)
 
+# A small, fast core for the lightweight build (every name verified in the Termux index).
+CORE=(termux-tools termux-api openssh git curl wget jq tmux vim nano htop tree ripgrep fzf
+	python openssl nmap dnsutils iproute2 openvpn proot-distro)
+
 echo "== jaaOS Mobile toolkit: updating Termux"
 pkg update -y
-echo "== base, DevOps, security and VPN packages (${#BASE[@]} + ${#DEVOPS[@]} + ${#SECURITY[@]} + ${#NETVPN[@]})"
-pkg install -y "${BASE[@]}" "${DEVOPS[@]}" "${SECURITY[@]}" "${NETVPN[@]}"
-echo "== Python tools: ${PIP[*]}"
-pip install --upgrade "${PIP[@]}"
+if [ "${MINIMAL:-0}" = 1 ]; then
+	echo "== MINIMAL core (${#CORE[@]} packages) — add more with 'pkg install' or 'jaa-linux'"
+	pkg install -y "${CORE[@]}"
+else
+	echo "== base, DevOps, security and VPN packages (${#BASE[@]} + ${#DEVOPS[@]} + ${#SECURITY[@]} + ${#NETVPN[@]})"
+	pkg install -y "${BASE[@]}" "${DEVOPS[@]}" "${SECURITY[@]}" "${NETVPN[@]}"
+	echo "== Python tools: ${PIP[*]}"
+	pip install --upgrade "${PIP[@]}"
+fi
 
 # ---- SSH: keys only ----------------------------------------------------------------------
 mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"; touch "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"

@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# jaa-harden — audit and (optionally) harden a jaaOS Mobile phone's security posture, over USB.
+# Read-only `audit` scores the phone against a mobile hardening baseline; `apply` changes only the
+# SAFE, reversible settings and asks first. Every run is appended to a local audit log.
+# (prototype / behavioural spec; host-side tool that drives `adb`.)
+#
+#   jaa-harden audit                 # scored posture report, changes nothing
+#   jaa-harden apply                 # set the safe hardening options (asks before changing)
+#   jaa-harden apply --dns dns.quad9.net   # also pin encrypted DNS (DNS-over-TLS) to this resolver
+#
+# It does NOT bypass anything or touch the bootloader; it configures Android's own privacy and
+# security settings. Defaults assume a de-Googled LineageOS phone (jaaOS Mobile).
+set -euo pipefail
+
+ADB="${ADB:-adb}"
+STATE="${JAA_HARDEN_STATE:-${XDG_DATA_HOME:-$HOME/.local/share}/jaa-harden}"
+AUDIT="${JAA_HARDEN_AUDIT:-$STATE/audit.log}"
+# A privacy-respecting DNS-over-TLS resolver (also blocks malware domains). Override with --dns.
+DNS_HOST="${JAA_HARDEN_DNS:-dns.quad9.net}"
+
+die()  { echo "ERROR: $*" >&2; exit 1; }
+
+select_device() {
+	command -v "$ADB" >/dev/null 2>&1 || die "adb not found — install it: sudo apt install adb"
+	local devs
+	mapfile -t devs < <("$ADB" devices 2>/dev/null | tr -d '\r' | awk 'NR>1 && $2=="device" {print $1}')
+	[ "${#devs[@]}" -gt 0 ] || die "no phone found: enable USB debugging and plug in USB"
+	[ "${#devs[@]}" -eq 1 ] || die "more than one device connected (${devs[*]}); unplug the others"
+	SERIAL="${devs[0]}"
+}
+sh_() { "$ADB" -s "$SERIAL" shell "$@" 2>/dev/null | tr -d '\r'; }
+prop() { sh_ getprop "$1"; }
+getg() { sh_ settings get global "$1"; }
+gets() { sh_ settings get secure "$1"; }
+putg() { echo "    settings put global $1 $2"; sh_ settings put global "$1" "$2"; }
+puts() { echo "    settings put secure $1 $2"; sh_ settings put secure "$1" "$2"; }
+
+audit_log() { mkdir -p "$STATE"; printf '%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "${SERIAL:-?}" "$*" >> "$AUDIT"; }
+
+P=0; W=0; F=0
+pass() { echo "  PASS  $1"; P=$((P + 1)); }
+warn() { echo "  WARN  $1"; W=$((W + 1)); }
+flunk() { echo "  FAIL  $1"; F=$((F + 1)); }
+
+# Days since a YYYY-MM-DD date (portable-ish; empty on parse failure).
+days_since() { local e n; e="$(date -u -d "$1" +%s 2>/dev/null)" || return 1; n="$(date -u +%s)"; echo $(((n - e) / 86400)); }
+
+run_audit() {
+	echo "jaaOS hardening audit — $(prop ro.product.model) ($(prop ro.product.device)), $(prop ro.build.display.id)"
+	echo
+
+	# --- storage / platform integrity ---
+	case "$(prop ro.crypto.state)" in encrypted) pass "storage is encrypted";; *) flunk "storage is NOT reported encrypted — set a lock screen and enable encryption";; esac
+	case "$(sh_ getenforce)" in Enforcing) pass "SELinux enforcing";; *) flunk "SELinux not enforcing ($(sh_ getenforce)) — do not run a permissive build";; esac
+	local patch; patch="$(prop ro.build.version.security_patch)"
+	local age; age="$(days_since "$patch" || true)"
+	if [ -z "$age" ]; then warn "could not read the security patch date ($patch)"
+	elif [ "$age" -le 75 ]; then pass "security patch is recent ($patch, ${age}d)"
+	else flunk "security patch is old ($patch, ${age}d) — run Updater / rebuild the ROM"; fi
+
+	# --- attack surface ---
+	local adbport; adbport="$(prop service.adb.tcp.port)"
+	if [ -z "$adbport" ] || [ "$adbport" = "-1" ]; then pass "ADB over network is off"
+	else flunk "ADB over TCP is ON (port $adbport) — anyone on the network can connect: turn it off"; fi
+	case "$(getg package_verifier_enable)" in 0) flunk "app install verification is OFF (package_verifier_enable=0)";; *) pass "app install verification is on";; esac
+	case "$(getg verifier_verify_adb_installs)" in 0) warn "sideloaded (adb) installs are NOT verified (verifier_verify_adb_installs=0)";; *) pass "sideloaded installs are verified";; esac
+
+	# --- privacy / de-Google ---
+	if sh_ pm list packages 2>/dev/null | grep -q 'com.google.android.gms'; then warn "Google Play Services is installed (microG/none is the de-Googled default)"; else pass "no Google Play Services (de-Googled)"; fi
+	case "$(getg captive_portal_mode)" in 0) pass "Google connectivity check (captive portal) disabled";; *) warn "the OS pings Google to check connectivity (captive_portal_mode!=0) — leaks that the phone is on";; esac
+
+	# --- network ---
+	case "$(getg private_dns_mode)" in hostname) pass "encrypted DNS (DNS-over-TLS) is on: $(getg private_dns_specifier)";; *) flunk "encrypted DNS is not pinned (private_dns_mode=$(getg private_dns_mode)) — DNS queries are in the clear";; esac
+	local vpnapp; vpnapp="$(getg always_on_vpn_app)"
+	if [ -n "$vpnapp" ] && [ "$vpnapp" != null ]; then
+		case "$(getg always_on_vpn_lockdown)" in 1) pass "always-on VPN with lockdown ($vpnapp)";; *) warn "always-on VPN set ($vpnapp) but no lockdown — traffic leaks if the VPN drops";; esac
+	else warn "no always-on VPN configured (optional; set one in your VPN app for untrusted networks)"; fi
+
+	# --- lock screen ---
+	case "$(gets lock_screen_allow_private_notifications)" in 0) pass "lock screen hides private notification content";; *) warn "lock screen shows notification content (lock_screen_allow_private_notifications!=0)";; esac
+	case "$(gets lockscreen_show_silent_notifications)" in 0) pass "silent notifications hidden on lock screen";; *) warn "silent notifications shown on lock screen";; esac
+
+	# --- developer surface ---
+	case "$(getg development_settings_enabled)" in 1) warn "Developer options are enabled — fine while setting up; turn off for daily use";; *) pass "Developer options disabled";; esac
+	case "$(getg adb_enabled)" in 1) warn "USB debugging (adb) is on — turn it off when you are done with these tools";; *) pass "USB debugging off";; esac
+
+	echo
+	echo "score: $P pass, $W warn, $F fail"
+	echo "Fix the safe ones automatically:  jaa-harden apply"
+	[ "$F" -eq 0 ]
+}
+
+run_apply() {
+	local dns="$DNS_HOST"
+	while [ $# -gt 0 ]; do case "$1" in --dns) dns="${2:-}"; shift 2;; *) die "unknown option: $1";; esac; done
+	[[ "$dns" =~ ^[A-Za-z0-9.-]+$ ]] || die "bad --dns host: $dns"
+	cat <<EOF
+This will change these SAFE, reversible settings on $(prop ro.product.model):
+  - encrypted DNS (DNS-over-TLS) -> $dns
+  - disable the Google connectivity check (captive_portal_mode 0)
+  - hide private + silent notification content on the lock screen
+  - require verification of app installs, including sideloaded (adb) ones
+Nothing about the bootloader, your data or your apps is touched.
+EOF
+	local ans; read -r -p "Type APPLY to continue: " ans; [ "$ans" = APPLY ] || die "not confirmed — nothing changed"
+	audit_log "apply (dns=$dns)"
+	echo "applying:"
+	putg private_dns_mode hostname
+	putg private_dns_specifier "$dns"
+	putg captive_portal_mode 0
+	puts lock_screen_allow_private_notifications 0
+	puts lockscreen_show_silent_notifications 0
+	putg package_verifier_enable 1
+	putg verifier_verify_adb_installs 1
+	echo "done. Re-check with: jaa-harden audit"
+	echo "Tip: when you finish using these USB tools, turn OFF Settings > Developer options > USB debugging."
+}
+
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+
+SERIAL=""
+cmd="${1:-help}"; [ $# -gt 0 ] && shift
+case "$cmd" in
+	audit) select_device; audit_log "audit"; run_audit "$@" ;;
+	apply) select_device; run_apply "$@" ;;
+	help|-h|--help) usage ;;
+	*) usage >&2; exit 2 ;;
+esac
