@@ -12,6 +12,9 @@ Read in order; each phase doc ends with acceptance criteria and known limitation
 | [05-phase4-hosting.md](05-phase4-hosting.md) | Hosting & load-balancing CLI (`jaa-host`): nginx/Caddy sites, HAProxy/Traefik LBs, keepalived HA, firewall + monitoring integration. |
 | [06-phase5-monitoring.md](06-phase5-monitoring.md) | Self-monitoring stack: Prometheus/Alertmanager/Loki/Alloy/Grafana/Falco + `jaa-health`, lite/full modes, the monitoring deniability rules (R-MON). |
 | [07-phase6-vapt.md](07-phase6-vapt.md) | VAPT toolkit `jaa-scan`: engagement files, the scope gate, containerized assessment profiles, audit — authorized-testing-only. |
+| [13-mobile-netadmin.md](13-mobile-netadmin.md) | jaaOS Mobile network admin: `jaa-net` (map/watch/device/serve/block) + hacker-vibe dashboard; see every device on your WiFi, monitor joins/leaves; blocking via the router (no ARP-spoof), honest limits. |
+| [12-mobile-build.md](12-mobile-build.md) | jaaOS Mobile on the Galaxy A71: verify + install official LineageOS 23.2, the jaaOS layer (`jaa-mobile`: verified apps, Aurora/microG, Termux DevOps+security toolkit, audit logs, remote wipe, low-bandwidth mode, VNC desktop), what the phone cannot do, test results. |
+| [11-mobile.md](11-mobile.md) | jaaOS Mobile: de-Google a Samsung phone (`jaa-debloat`, keeps every camera feature), two PINs → two workspaces, the custom-ROM path and its limits. |
 | [10-desktop.md](10-desktop.md) | Desktop edition: XFCE live ISO (`make live-desktop`), the installer's `desktop-xfce` profile, the X11 trade-off. |
 | [09-cluster.md](09-cluster.md) | Docker + RKE2 built in; master/worker/none at install; how masters and workers find and trust each other (mDNS + join code + CA fingerprint); cluster firewall. |
 | [08-phase7-release.md](08-phase7-release.md) | CI, signed reproducible releases, `jaa-update` (snapshot rollback), declarative `jaa diff`/`apply`, first Rust port; lite live ISO (boots in QEMU) + Cockpit scaffold. |

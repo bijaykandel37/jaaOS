@@ -99,11 +99,23 @@ Exec=xfce4-terminal --title="jaaOS shortcuts" --geometry=82x34 --hold -x jaa-key
 Icon=input-keyboard
 Categories=System;Utility;
 EOF
+	# Brave (the default browser) is not in Debian; offer a one-click installer on the desktop.
+	cat > /usr/share/applications/jaa-brave.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Install Brave (default browser)
+Comment=Install the Brave browser from Brave's official repo and set it as the default
+Exec=xfce4-terminal --title="Install Brave" --hold -x sudo jaa-brave
+Icon=web-browser
+Categories=Network;System;
+EOF
 	install -d -o jaa -g jaa /home/jaa/Desktop
-	for f in jaa-install jaa-keys xfce4-terminal firefox-esr; do
+	for f in jaa-install jaa-brave jaa-keys xfce4-terminal vlc firefox-esr; do
 		[ -f "/usr/share/applications/$f.desktop" ] || continue
 		install -m 0755 -o jaa -g jaa "/usr/share/applications/$f.desktop" "/home/jaa/Desktop/$f.desktop"
 	done
+	# Make VLC the default media player now (it is installed); update the MIME cache.
+	update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 	systemctl enable lightdm.service >/dev/null 2>&1 || true
 	systemctl set-default graphical.target >/dev/null
 fi

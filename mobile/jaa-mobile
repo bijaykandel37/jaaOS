@@ -1,0 +1,351 @@
+#!/usr/bin/env bash
+# jaa-mobile — turn an official LineageOS phone into jaaOS Mobile, from a computer over USB.
+# (prototype / behavioural spec; host-side tool that drives `adb`. Read docs/12-mobile-build.md.)
+#
+#   jaa-mobile verify-image DIR               # check a downloaded LineageOS build: hashes + LineageOS signature
+#   jaa-mobile fetch-apps [--flavor pure|microg]   # download the pinned apps, check hash + signing certificate
+#   jaa-mobile setup [--flavor pure|microg]   # install the jaaOS layer on the phone (after LineageOS is installed)
+#   jaa-mobile lowbw on|off|status            # low-bandwidth mode: background data only for SSH + alerts
+#   jaa-mobile install-apk FILE.apk           # install any APK (shows what it is first)
+#   jaa-mobile workspace                      # second-workspace options: Private space / users
+#   jaa-mobile set-default                    # Brave as default browser, VLC as default media player
+#   jaa-mobile audit [verify]                 # this computer's log of every adb command jaa-mobile ran
+#
+# Flavours: pure (default) = no Google code at all; Play Store apps through Aurora Store.
+#           microg = + microG (open-source Play Services: push notifications, location).
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+LOCK="${JAA_MOBILE_LOCK:-$SELF_DIR/apps.lock}"
+PUBKEY="${JAA_MOBILE_PUBKEY:-$SELF_DIR/keys/lineageos_pubkey}"
+TERMUX_SETUP="$SELF_DIR/termux/jaa-devsec-setup.sh"
+ADB="${ADB:-adb}"
+STATE="${JAA_MOBILE_STATE:-${XDG_DATA_HOME:-$HOME/.local/share}/jaa-mobile}"
+APKS="${JAA_MOBILE_APKS:-$STATE/apks}"
+AUDIT="$STATE/audit.log"
+# Apps that keep network access in low-bandwidth mode: SSH, alerts, remote wipe.
+LOWBW_ALLOW=(com.termux org.connectbot io.heckel.ntfy de.nulide.findmydevice)
+
+die()  { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARN: $*" >&2; }
+valid_pkg() { [[ "$1" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$ ]]; }
+
+# ---- audit log (this computer): one line per adb command, hash-chained ----------------------
+# Each line ends with sha256(previous line hash + this line), so editing or deleting a line in
+# the middle is detectable with `jaa-mobile audit verify`. Tamper-EVIDENT, not tamper-proof:
+# someone who controls this account can rewrite the whole file.
+audit_line() {
+	mkdir -p "$STATE"
+	local prev="0000000000000000000000000000000000000000000000000000000000000000" body
+	[ -s "$AUDIT" ] && prev="$(tail -1 "$AUDIT" | awk -F'\t' '{print $NF}')"
+	body="$(date -u +%FT%TZ)	${SERIAL:-?}	$*"
+	printf '%s\t%s\n' "$body" "$(printf '%s%s' "$prev" "$body" | sha256sum | cut -d' ' -f1)" >> "$AUDIT"
+}
+adbx() { audit_line "adb $*"; "$ADB" -s "$SERIAL" "$@"; }
+phone() { adbx shell "$@" 2>/dev/null | tr -d '\r'; }
+prop() { phone getprop "$1"; }
+
+select_device() {
+	command -v "$ADB" >/dev/null 2>&1 || die "adb not found — install it: sudo apt install adb"
+	local devs
+	mapfile -t devs < <("$ADB" devices 2>/dev/null | tr -d '\r' | awk 'NR>1 && $2=="device" {print $1}')
+	[ "${#devs[@]}" -gt 0 ] || die "no phone found: enable USB debugging (Settings > System > Developer options) and plug in USB"
+	[ "${#devs[@]}" -eq 1 ] || die "more than one device connected (${devs[*]}); unplug the others"
+	SERIAL="${devs[0]}"
+}
+
+require_lineage() {
+	local v; v="$(prop ro.lineage.version)"
+	[ -n "$v" ] || die "this phone is not running LineageOS — install it first (docs/12-mobile-build.md)"
+	echo "phone: $(prop ro.product.model) ($(prop ro.product.device)), LineageOS $v, Android $(prop ro.build.version.release), patch $(prop ro.build.version.security_patch)"
+	[ "$(prop ro.product.device)" = a71 ] || warn "jaaOS Mobile is documented and tested for the Galaxy A71 (a71); this is $(prop ro.product.device)"
+}
+
+# ---- lock file ----------------------------------------------------------------------------
+lock_rows() { # <flavor> -> rows for the sets that flavour installs (microG first)
+	local flavor="$1"
+	[ -f "$LOCK" ] || die "missing $LOCK"
+	{ [ "$flavor" = microg ] && awk -F'\t' '$1=="microg"' "$LOCK"; awk -F'\t' '!/^#/ && $1!="microg"' "$LOCK"; } \
+		| awk -F'\t' 'NF>=8'
+}
+parse_flavor() {
+	FLAVOR=pure
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--flavor) FLAVOR="${2:-}"; shift 2 ;;
+			*) die "unknown option: $1" ;;
+		esac
+	done
+	case "$FLAVOR" in pure|microg) ;; *) die "--flavor must be pure or microg" ;; esac
+}
+
+apk_ok() { # <file> <sha256> <signer> — 0 if the file matches both pins
+	local f="$1" want="$2" signer="$3" got
+	[ -f "$f" ] || return 1
+	got="$(sha256sum "$f" | cut -d' ' -f1)"
+	[ "$got" = "$want" ] || { warn "$(basename "$f"): SHA-256 $got does not match the lock ($want)"; return 1; }
+	local signer_tool="${APKSIGNER:-$(command -v apksigner || true)}"
+	if [ -n "$signer_tool" ]; then
+		local certs
+		certs="$("$signer_tool" verify --print-certs "$f" 2>/dev/null | sed -n 's/.*Signer.*certificate SHA-256 digest: //p' | sort -u)"
+		grep -qx "$signer" <<<"$certs" || { warn "$(basename "$f"): not signed by the pinned certificate $signer"; return 1; }
+	elif [ "${JAA_MOBILE_HASH_ONLY:-0}" != 1 ]; then
+		warn "apksigner not found: install it (Android build-tools) or set JAA_MOBILE_HASH_ONLY=1 to rely on the SHA-256 pin only"
+		return 1
+	fi
+	return 0
+}
+
+# ---- commands -----------------------------------------------------------------------------
+cmd_verify_image() { # <dir with the downloaded build>
+	local dir="${1:-}"; [ -d "$dir" ] || die "usage: jaa-mobile verify-image DIR (containing lineage-*.zip)"
+	local zip; zip="$(find "$dir" -maxdepth 1 -name 'lineage-*-signed.zip' | sort | tail -1)"
+	[ -n "$zip" ] || die "no lineage-*-signed.zip in $dir"
+	echo "image: $(basename "$zip")"
+	if [ -f "$dir/SHA256SUMS" ]; then
+		(cd "$dir" && sha256sum -c --quiet SHA256SUMS) && echo "PASS  all files match SHA256SUMS" || die "hash mismatch — do not flash"
+	else
+		warn "no SHA256SUMS in $dir (fetch-image writes one from download.lineageos.org): hashes not checked"
+	fi
+	[ -f "$PUBKEY" ] || die "missing LineageOS public key $PUBKEY"
+	python3 -I - "$zip" "$PUBKEY" <<'PY' || die "signature check FAILED — do not flash"
+# Whole-file OTA signature (signapk -w), the same check the phone's recovery makes.
+import struct, subprocess, sys, tempfile, os
+zip_path, pubkey = sys.argv[1], sys.argv[2]
+size = os.path.getsize(zip_path)
+with open(zip_path, "rb") as f:
+    f.seek(size - 6); sig_start, magic, comment_size = struct.unpack("<HHH", f.read(6))
+    if magic != 0xFFFF: sys.exit("no whole-file signature footer")
+    f.seek(size - comment_size - 22)
+    if f.read(4) != b"PK\x05\x06": sys.exit("zip comment does not hold the signature")
+    f.seek(size - sig_start); sig = f.read(sig_start - 6)
+with tempfile.TemporaryDirectory() as t:
+    s, c, signed = os.path.join(t, "sig.der"), os.path.join(t, "signer.pem"), os.path.join(t, "signed.bin")
+    open(s, "wb").write(sig)
+    with open(zip_path, "rb") as src, open(signed, "wb") as dst:
+        left = size - comment_size - 2
+        while left:
+            b = src.read(min(left, 1 << 22)); dst.write(b); left -= len(b)
+    r = subprocess.run(["openssl", "cms", "-verify", "-inform", "DER", "-in", s, "-binary", "-content", signed,
+                        "-noverify", "-out", os.devnull, "-certsout", c], capture_output=True, text=True)
+    if r.returncode: sys.exit("signature does not verify: " + r.stderr.strip())
+    der = lambda args: subprocess.run(args, capture_output=True).stdout
+    signer = der(["sh", "-c", f"openssl x509 -in '{c}' -noout -pubkey | openssl pkey -pubin -outform DER"])
+    want = der(["openssl", "pkey", "-pubin", "-in", pubkey, "-outform", "DER"])
+    if not signer or signer != want: sys.exit("signed, but NOT by the LineageOS release key")
+print("PASS  signed by the LineageOS release key (whole-file signature verified)")
+PY
+	if [ -f "$dir/vbmeta.img" ]; then
+		local flags; flags="$(od -An -tu1 -j120 -N4 "$dir/vbmeta.img" | awk '{print $1*16777216+$2*65536+$3*256+$4}')"
+		if [ "$flags" -ne 0 ]; then
+			echo "NOTE  vbmeta flags=$flags: Android Verified Boot is disabled for this device (its bootloader cannot be relocked)."
+		else
+			echo "PASS  vbmeta enforces verified boot"
+		fi
+	fi
+}
+
+cmd_fetch_image() { # <codename> <dir>: newest official build + its published hashes
+	local code="${1:-a71}" dir="${2:-}"; [ -n "$dir" ] || dir="$STATE/images/$code"
+	[[ "$code" =~ ^[a-z0-9_]+$ ]] || die "bad codename"
+	mkdir -p "$dir"
+	curl -sSfL -o "$dir/builds.json" "https://download.lineageos.org/api/v2/devices/$code/builds"
+	python3 -I - "$dir/builds.json" "$dir" <<'PY'
+import json, sys, os, subprocess
+b = json.load(open(sys.argv[1]))[0]; out = sys.argv[2]
+with open(os.path.join(out, "SHA256SUMS"), "w") as sums:
+    for f in b["files"]:
+        if f["filename"] not in ("build-manifest.xml",):
+            sums.write(f"{f['sha256']}  {f['filename']}\n")
+            print("downloading", f["filename"])
+            subprocess.run(["curl", "-sSfL", "--retry", "3", "-o", os.path.join(out, f["filename"]), f["url"]], check=True)
+print("build", b["version"], b["date"])
+PY
+	cmd_verify_image "$dir"
+}
+
+cmd_fetch_apps() {
+	parse_flavor "$@"
+	mkdir -p "$APKS"
+	local pkg ver url sha signer desc f bad=0
+	while IFS=$'\t' read -r _ pkg ver _ url sha signer desc; do
+		valid_pkg "$pkg" || die "bad package in lock: $pkg"
+		[[ "$url" =~ ^https://(f-droid\.org|microg\.org)/ ]] || die "lock URL is not an official repo: $url"
+		f="$APKS/$(basename "$url")"
+		if ! apk_ok "$f" "$sha" "$signer" 2>/dev/null; then
+			curl -sSfL --retry 3 -o "$f.part" "$url" && mv "$f.part" "$f"
+		fi
+		if apk_ok "$f" "$sha" "$signer"; then printf 'OK    %-30s %-16s %s\n' "$pkg" "$ver" "$desc"
+		else rm -f "$f"; bad=$((bad + 1)); printf 'FAIL  %s\n' "$pkg"; fi
+	done < <(lock_rows "$FLAVOR")
+	[ "$bad" -eq 0 ] || die "$bad app(s) failed verification — nothing will be installed from them"
+	echo "All apps verified (SHA-256 + signing certificate) in $APKS"
+}
+
+cmd_setup() {
+	parse_flavor "$@"; select_device; require_lineage
+	local pkg ver url sha signer desc f out
+	echo "== installing the jaaOS app layer (flavour: $FLAVOR)"
+	while IFS=$'\t' read -r _ pkg ver _ url sha signer desc; do
+		f="$APKS/$(basename "$url")"
+		apk_ok "$f" "$sha" "$signer" || die "$pkg is missing or unverified — run: jaa-mobile fetch-apps --flavor $FLAVOR"
+		out="$(adbx install -r "$f" 2>&1 | tr -d '\r' | tail -1)"
+		[[ "$out" == *Success* ]] && printf '  installed  %-30s %s\n' "$pkg" "$ver" || die "installing $pkg failed: $out"
+	done < <(lock_rows "$FLAVOR")
+
+	echo "== speed defaults: shorter animations"
+	local k
+	for k in window_animation_scale transition_animation_scale animator_duration_scale; do
+		phone settings put global "$k" 0.5 >/dev/null
+	done
+
+	echo "== DevOps / security toolkit for Termux"
+	[ -f "$TERMUX_SETUP" ] || die "missing $TERMUX_SETUP"
+	adbx push "$TERMUX_SETUP" /sdcard/Download/jaa-devsec-setup.sh >/dev/null
+	[ -f "$SELF_DIR/wifi/jaa-wifi" ] && adbx push "$SELF_DIR/wifi/jaa-wifi" /sdcard/Download/jaa-wifi >/dev/null
+	[ -f "$SELF_DIR/wifi/engagement.example.conf" ] && adbx push "$SELF_DIR/wifi/engagement.example.conf" /sdcard/Download/wifi-engagement.example.conf >/dev/null
+	if [ -f "$SELF_DIR/net/jaa-net" ]; then
+		adbx push "$SELF_DIR/net/jaa-net" /sdcard/Download/jaa-net >/dev/null
+		adbx push "$SELF_DIR/net/jaa-net-scan.py" /sdcard/Download/jaa-net-scan.py >/dev/null
+		adbx push "$SELF_DIR/net/dashboard" /sdcard/Download/jaa-net-dashboard >/dev/null
+	fi
+	cat <<EOF
+
+Done. Finish on the phone (these steps need you, by design):
+  1. Termux: run   termux-setup-storage   then   bash ~/storage/downloads/jaa-devsec-setup.sh
+  2. FMD (remote wipe): open FMD, grant device admin, set a PIN; then "wipe" is an SMS command
+     from a trusted number (see docs/12-mobile-build.md, "Remote wipe").
+  3. Harden the phone's security settings:   jaa-harden audit   then   jaa-harden apply
+  4. Default apps: VLC is installed; install Brave from the Aurora Store, then:  jaa-mobile set-default
+  5. Second workspace: Settings > Security & privacy > Private space (own PIN/pattern), or
+     Settings > System > Multiple users. See:  jaa-mobile workspace
+EOF
+	[ "$FLAVOR" = microg ] && echo "  6. microG: open microG Settings > Self-Check, grant everything; enable Cloud Messaging."
+	return 0
+}
+
+uid_of() { phone cmd package list packages -U "$1" | sed -n "s/^package:$1 uid:\([0-9]*\).*/\1/p" | head -1; }
+
+cmd_lowbw() {
+	local mode="${1:-status}"; select_device
+	local pkg uid
+	case "$mode" in
+		on)
+			phone cmd netpolicy set restrict-background true >/dev/null
+			for pkg in "${LOWBW_ALLOW[@]}"; do
+				uid="$(uid_of "$pkg")"; [ -n "$uid" ] || { warn "$pkg not installed; skipped"; continue; }
+				phone cmd netpolicy add restrict-background-whitelist "$uid" >/dev/null
+				echo "  keeps background data: $pkg (uid $uid)"
+			done
+			echo "Low-bandwidth mode ON: Data Saver blocks background data on mobile data for every other app."
+			echo "For a hard block on Wi-Fi too, use NetGuard's per-app rules (docs/12-mobile-build.md)." ;;
+		off)
+			for pkg in "${LOWBW_ALLOW[@]}"; do
+				uid="$(uid_of "$pkg")"; [ -n "$uid" ] && phone cmd netpolicy remove restrict-background-whitelist "$uid" >/dev/null
+			done
+			phone cmd netpolicy set restrict-background false >/dev/null
+			echo "Low-bandwidth mode OFF." ;;
+		status)
+			echo "Data Saver: $(phone cmd netpolicy get restrict-background)"
+			echo "Allowed in the background: $(phone cmd netpolicy list restrict-background-whitelist)" ;;
+		*) die "usage: jaa-mobile lowbw on|off|status" ;;
+	esac
+}
+
+cmd_install_apk() {
+	local f="${1:-}"; [ -f "$f" ] || die "usage: jaa-mobile install-apk FILE.apk"
+	select_device
+	local aapt="${AAPT2:-$(command -v aapt2 || true)}"
+	if [ -n "$aapt" ]; then "$aapt" dump badging "$f" 2>/dev/null | grep -E "^package:|^application-label:" | head -2; fi
+	local out; out="$(adbx install -r "$f" 2>&1 | tr -d '\r' | tail -1)"
+	[[ "$out" == *Success* ]] && echo "installed $(basename "$f")" || die "install failed: $out"
+}
+
+cmd_workspace() {
+	select_device
+	cat <<EOF
+Users on this phone:
+$(phone pm list users | sed 's/^/  /')
+Maximum users: $(phone pm get-max-users | sed 's/.*: *//')
+
+Two secrets, two workspaces:
+  Private space   Settings > Security & privacy > Private space: its own PIN/pattern, can be
+                  hidden and locked; apps inside are invisible while it is locked.
+  Second user     Settings > System > Multiple users: a fully separate phone with its own lock
+                  and encryption key; switch at the lock screen.
+EOF
+}
+
+pkg_installed_phone() { phone pm list packages 2>/dev/null | grep -qx "package:$1"; }
+
+cmd_set_default() {
+	local browser="com.brave.browser" media="org.videolan.vlc"
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--browser) browser="${2:-}"; shift 2 ;;
+			--media)   media="${2:-}"; shift 2 ;;
+			*) die "unknown option: $1" ;;
+		esac
+	done
+	valid_pkg "$browser" || die "bad --browser package: $browser"
+	valid_pkg "$media" || die "bad --media package: $media"
+	select_device
+	audit_line "set-default browser=$browser media=$media"
+
+	echo "== default browser -> $browser"
+	if pkg_installed_phone "$browser"; then
+		# Android 10+: the browser is a role. On a LineageOS userdebug build the adb shell may set it.
+		phone cmd role add-role-holder android.app.role.BROWSER "$browser" >/dev/null 2>&1 || true
+		local held; held="$(phone cmd role get-role-holders android.app.role.BROWSER 2>/dev/null)"
+		if [[ "$held" == *"$browser"* ]]; then echo "  set as the default browser."
+		else echo "  could NOT set it from here. On the phone: Settings > Apps > Default apps > Browser app > ${browser##*.}."; fi
+	else
+		echo "  $browser is not installed."
+		case "$browser" in
+			com.brave.browser) echo "  Brave is not on F-Droid. Install it from the Aurora Store (search 'Brave'), then re-run this.";;
+			*) echo "  Install it first, then re-run this.";;
+		esac
+	fi
+
+	echo "== default media player -> $media"
+	if pkg_installed_phone "$media"; then
+		# Android has no 'media player' role, so this cannot be forced from adb. Set it on the phone once.
+		echo "  $media is installed. Android has no system 'default media player' switch, so set it once:"
+		echo "    open any audio/video file > choose ${media##*.} > 'Always'. (It then stays the default.)"
+	else
+		echo "  $media is not installed — run: jaa-mobile fetch-apps && jaa-mobile setup  (VLC is in apps.lock)."
+	fi
+}
+
+cmd_audit() {
+	[ -f "$AUDIT" ] || { echo "no audit log yet ($AUDIT)"; return 0; }
+	if [ "${1:-}" = verify ]; then
+		local prev="0000000000000000000000000000000000000000000000000000000000000000" n=0 line body hash
+		while IFS= read -r line; do
+			n=$((n + 1)); body="${line%$'\t'*}"; hash="${line##*$'\t'}"
+			[ "$(printf '%s%s' "$prev" "$body" | sha256sum | cut -d' ' -f1)" = "$hash" ] || die "audit log broken at line $n — it was edited or a line was removed"
+			prev="$hash"
+		done < "$AUDIT"
+		echo "audit log intact: $n entries ($AUDIT)"
+	else
+		cut -f1-3 "$AUDIT"
+	fi
+}
+
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
+
+SERIAL=""
+cmd="${1:-help}"; [ $# -gt 0 ] && shift
+case "$cmd" in
+	verify-image) cmd_verify_image "$@" ;;
+	fetch-image)  cmd_fetch_image "$@" ;;
+	fetch-apps)   cmd_fetch_apps "$@" ;;
+	setup)        cmd_setup "$@" ;;
+	lowbw)        cmd_lowbw "$@" ;;
+	install-apk)  cmd_install_apk "$@" ;;
+	workspace)    cmd_workspace "$@" ;;
+	set-default)  cmd_set_default "$@" ;;
+	audit)        cmd_audit "$@" ;;
+	help|-h|--help) usage ;;
+	*) usage >&2; exit 2 ;;
+esac

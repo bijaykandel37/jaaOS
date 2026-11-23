@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- jaaOS Mobile (custom-ROM path, LineageOS base): allow separate Android users on a phone, so
+     each workspace has its own PIN/pattern/password and its own file-based-encryption key.
+     Add as a device or vendor overlay (PRODUCT_PACKAGE_OVERLAYS). NOT built or booted yet. -->
+<resources>
+    <!-- Owner + second workspace + one spare (e.g. a guest). -->
+    <integer name="config_multiuserMaximumUsers">3</integer>
+    <!-- Show the user switcher (lock screen + quick settings). -->
+    <bool name="config_enableMultiUserUI">true</bool>
+</resources>

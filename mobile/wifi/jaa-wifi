@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# jaa-wifi — WiFi security auditor for jaaOS Mobile. Tells you whether a WiFi network you are
+# authorized to test can be attacked, and why, from its advertised security. AUTHORIZED TESTING
+# ONLY — same contract as jaa-scan (docs/07-phase6-vapt.md): it refuses without an engagement file
+# declaring AUTHORIZATION_REF + scope, exclusions win over scope, and every run is audited.
+# (prototype / behavioural spec; runs on the phone in Termux.)
+#
+#   jaa-wifi engagement init                 # write a wifi-engagement.conf to fill in
+#   jaa-wifi scope check "MyHomeWiFi"        # is this network in your authorized scope?
+#   jaa-wifi audit                           # assess every in-scope network in range
+#   jaa-wifi check-own                       # assess the network this phone is connected to
+#
+# This is an ASSESSMENT tool: it reads the public beacon each access point broadcasts and judges
+# its security (open / WEP / WPA / WPA2 / WPA3, and whether WPS is on). It does NOT attack: no
+# WPS PIN cracking, no handshake capture, no deauth. Active testing (external adapter required) is
+# documented in docs/12-mobile-build.md §"Active WiFi testing" and is authorized-only too.
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+ENGAGEMENT="${JAA_WIFI_ENGAGEMENT:-./wifi-engagement.conf}"
+AUDIT="${JAA_WIFI_AUDIT:-${XDG_DATA_HOME:-$HOME/.local/share}/jaa-wifi/audit.log}"
+
+die()  { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARN: $*" >&2; }
+
+# ---- engagement: parsed, never sourced -----------------------------------------------------
+eng_get() { sed -n "s/^$1=//p" "$ENGAGEMENT" 2>/dev/null | head -1; }
+# Split a value into tokens, honouring "quoted names with spaces". Prints one per line.
+eng_list() { eng_get "$1" | grep -oE '"[^"]*"|[^[:space:]]+' | sed 's/^"//; s/"$//'; }
+
+require_engagement() {
+	[ -f "$ENGAGEMENT" ] || die "no engagement file ($ENGAGEMENT). Run: jaa-wifi engagement init"
+	local ref; ref="$(eng_get AUTHORIZATION_REF)"
+	[ -n "$ref" ] || die "engagement has no AUTHORIZATION_REF — authorization is mandatory"
+	{ [ -n "$(eng_get SCOPE_SSIDS)" ] || [ -n "$(eng_get SCOPE_BSSIDS)" ]; } \
+		|| die "engagement declares no scope (SCOPE_SSIDS / SCOPE_BSSIDS) — nothing is authorized"
+}
+
+norm_mac() { tr 'A-F' 'a-f' <<<"$1"; }
+
+# Is <ssid> / <bssid> in scope and not excluded? Prints the reason on refusal (stdout), returns 1.
+in_scope() { # <ssid> <bssid>
+	local ssid="$1" bssid x; bssid="$(norm_mac "$2")"
+	while IFS= read -r x; do [ "$x" = "$ssid" ] && { echo "excluded by EXCLUDE_SSIDS"; return 1; }; done < <(eng_list EXCLUDE_SSIDS)
+	while IFS= read -r x; do [ "$(norm_mac "$x")" = "$bssid" ] && { echo "excluded by EXCLUDE_BSSIDS"; return 1; }; done < <(eng_list EXCLUDE_BSSIDS)
+	while IFS= read -r x; do [ "$x" = "$ssid" ] && return 0; done < <(eng_list SCOPE_SSIDS)
+	while IFS= read -r x; do [ -n "$x" ] && [ "$(norm_mac "$x")" = "$bssid" ] && return 0; done < <(eng_list SCOPE_BSSIDS)
+	echo "not in SCOPE_SSIDS / SCOPE_BSSIDS"; return 1
+}
+
+audit() { # <action> <detail>
+	mkdir -p "$(dirname "$AUDIT")"
+	printf '%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$(eng_get OPERATOR)" "auth=$(eng_get AUTHORIZATION_REF)" "$1: $2" >> "$AUDIT"
+}
+
+# ---- scanning: termux-api (no root) or a supplied scan file (tests) ------------------------
+# Emits one network per line:  BSSID \t RSSI \t FREQ \t CAPABILITIES \t SSID
+# CAPABILITIES is the beacon flags string, e.g. [WPA2-PSK-CCMP][WPS][ESS] or [RSN-SAE][ESS].
+scan() {
+	if [ -n "${JAA_WIFI_SCAN:-}" ]; then
+		[ -f "$JAA_WIFI_SCAN" ] || die "JAA_WIFI_SCAN=$JAA_WIFI_SCAN not found"
+		cat "$JAA_WIFI_SCAN"; return
+	fi
+	command -v termux-wifi-scaninfo >/dev/null 2>&1 \
+		|| die "termux-wifi-scaninfo not found — install Termux:API (app + 'pkg install termux-api') and grant Location"
+	command -v jq >/dev/null 2>&1 || die "jq not found — pkg install jq"
+	local json; json="$(termux-wifi-scaninfo 2>/dev/null)"
+	case "$json" in
+		''|'[]'|*'not available'*|*'permission'*) die "no scan results. Turn WiFi on and grant Termux:API the Location permission (Android requires it for WiFi scans)";;
+	esac
+	jq -r '.[] | [.bssid, (.rssi|tostring), (.frequency_mhz//.frequency//0|tostring), .capabilities, .ssid] | @tsv' <<<"$json"
+}
+
+# ---- the assessment: public-beacon security -> crackability verdict ------------------------
+# No active probing. Severity scale matches jaa-scan: CRITICAL > HIGH > MEDIUM > LOW > OK.
+assess() { # <caps> -> "<SEVERITY>\t<finding>\t<fix>"   (one line per weakness, worst first)
+	local caps="$1" up; up="$(tr 'a-z' 'A-Z' <<<"$caps")"
+	local sae=0 wpa2=0 wpa1=0 wep=0 psk=0 owe=0 wps=0 pmf_req=0 ent=0
+	[[ "$up" == *SAE* ]] && sae=1
+	[[ "$up" == *WPA2* || "$up" == *RSN* ]] && wpa2=1
+	[[ "$up" == *"WPA-"* || "$up" == *"[WPA]"* ]] && wpa1=1
+	[[ "$up" == *WEP* ]] && wep=1
+	[[ "$up" == *PSK* ]] && psk=1
+	[[ "$up" == *OWE* ]] && owe=1
+	[[ "$up" == *WPS* ]] && wps=1
+	[[ "$up" == *EAP* ]] && ent=1
+	[[ "$up" == *MFPR* || "$up" == *"PMF-REQUIRED"* ]] && pmf_req=1
+
+	if [ "$wep" = 1 ]; then
+		printf 'CRITICAL\tWEP encryption — broken; recovered in minutes with passive capture\tSwitch the router to WPA3, or WPA2-AES if WPA3 is unavailable\n'
+	elif [ "$wpa1" = 1 ] && [ "$wpa2" = 0 ] && [ "$sae" = 0 ]; then
+		printf 'HIGH\tWPA (WPA1/TKIP) only — deprecated cipher, offline-crackable\tSwitch to WPA3, or WPA2-AES (CCMP)\n'
+	elif [ "$sae" = 0 ] && [ "$wpa2" = 0 ] && [ "$owe" = 0 ] && [ "$ent" = 0 ]; then
+		printf 'CRITICAL\tOpen network — no encryption; anyone nearby can read traffic and join\tEnable WPA3 (or WPA2-AES) with a strong passphrase\n'
+	fi
+	if [ "$wps" = 1 ]; then
+		printf 'HIGH\tWPS enabled — the 8-digit PIN is brute-forceable (Reaver / Pixie-Dust)\tTurn OFF WPS in the router admin page\n'
+	fi
+	if [ "$sae" = 1 ]; then
+		if [ "$psk" = 1 ]; then
+			# SAE and PSK both offered = WPA3/WPA2 transition mode.
+			printf 'LOW\tWPA3 in transition mode (WPA2-PSK also allowed) — downgrade attacks possible\tSet WPA3-only once all your devices support it\n'
+			[ "$pmf_req" = 0 ] && printf 'LOW\tProtected Management Frames not required — allows deauth/evil-twin\tRequire PMF (802.11w) in the router\n'
+		else
+			printf 'OK\tWPA3-SAE — resistant to offline passphrase cracking; PMF mandatory\t-\n'
+		fi
+	elif [ "$wpa2" = 1 ] && [ "$psk" = 1 ]; then
+		printf 'MEDIUM\tWPA2-PSK — only as strong as the passphrase; a captured handshake can be dictionary-cracked offline\tUse a long random passphrase (>=16 chars) and enable WPA3 if the router supports it\n'
+		[ "$pmf_req" = 0 ] && printf 'LOW\tPMF (802.11w) not required — deauth can force a handshake capture\tEnable "Protected Management Frames" (required) in the router\n'
+	fi
+	if [ "$ent" = 1 ]; then
+		printf 'OK\tWPA-Enterprise (802.1X) — no shared passphrase to crack; audit the RADIUS/cert setup separately\t-\n'
+	fi
+}
+
+worst() { # reads SEVERITY-prefixed lines, prints the worst
+	awk -F'\t' 'BEGIN{r["CRITICAL"]=5;r["HIGH"]=4;r["MEDIUM"]=3;r["LOW"]=2;r["OK"]=1;b=0;w="OK"}
+		{if(r[$1]>b){b=r[$1];w=$1}} END{print w}'
+}
+
+# ---- commands ------------------------------------------------------------------------------
+cmd_scope_check() {
+	[ $# -ge 1 ] || die "usage: jaa-wifi scope check SSID [BSSID]"
+	require_engagement
+	local reason
+	if reason="$(in_scope "$1" "${2:-}")"; then echo "IN-SCOPE      $1 ${2:-}"
+	else echo "OUT-OF-SCOPE  $1 ${2:-}  ($reason)"; return 1; fi
+}
+
+print_assessment() { # <ssid> <bssid> <rssi> <caps>
+	local ssid="$1" bssid="$2" rssi="$3" caps="$4" findings sev
+	findings="$(assess "$caps")"
+	sev="$(printf '%s\n' "$findings" | worst)"
+	printf '\n  %s  [%s]  %s dBm\n  security: %s\n  VERDICT: %s\n' \
+		"${ssid:-<hidden>}" "$bssid" "$rssi" "$caps" "$sev"
+	printf '%s\n' "$findings" | while IFS=$'\t' read -r s f fix; do
+		[ -n "$s" ] || continue
+		printf '    - [%s] %s\n' "$s" "$f"
+		[ "$fix" = "-" ] || printf '              fix: %s\n' "$fix"
+	done
+}
+
+cmd_audit() {
+	[ $# -eq 0 ] || die "audit takes no arguments (got: $*). This tool does not attack; see docs/12-mobile-build.md."
+	require_engagement
+	audit audit "scan + assess in-scope networks"
+	echo "engagement: $(eng_get NAME)   authorization: $(eng_get AUTHORIZATION_REF)"
+	echo "Assessing only networks in your scope. Others in range are listed but NOT assessed."
+	local n_in=0 n_out=0 bssid rssi caps ssid reason
+	while IFS=$'\t' read -r bssid rssi _ caps ssid; do
+		[ -n "$bssid" ] || continue
+		if reason="$(in_scope "$ssid" "$bssid")"; then
+			print_assessment "$ssid" "$bssid" "$rssi" "$caps"; n_in=$((n_in + 1))
+		else
+			n_out=$((n_out + 1))
+		fi
+	done < <(scan | sort -t$'\t' -k2 -rn)
+	echo
+	echo "Assessed $n_in in-scope network(s); $n_out other network(s) in range were left alone."
+	[ "$n_in" -gt 0 ] || echo "No in-scope network was in range. Check SCOPE_SSIDS/SCOPE_BSSIDS in $ENGAGEMENT."
+}
+
+cmd_check_own() {
+	[ $# -eq 0 ] || die "check-own takes no arguments"
+	require_engagement
+	command -v termux-wifi-connectioninfo >/dev/null 2>&1 || die "termux-wifi-connectioninfo not found — install Termux:API"
+	command -v jq >/dev/null 2>&1 || die "jq not found — pkg install jq"
+	local info ssid bssid
+	info="$(termux-wifi-connectioninfo 2>/dev/null)"
+	ssid="$(jq -r '.ssid // empty' <<<"$info" | sed 's/^"//; s/"$//')"
+	bssid="$(jq -r '.bssid // empty' <<<"$info")"
+	[ -n "$bssid" ] && [ "$bssid" != "null" ] || die "not connected to WiFi (or Location permission not granted)"
+	local reason; reason="$(in_scope "$ssid" "$bssid")" || die "the connected network '$ssid' [$bssid] is $reason — add it to $ENGAGEMENT to assess it"
+	audit check-own "$ssid [$bssid]"
+	# Pull this network's row out of a full scan to get its capabilities.
+	local line; line="$(scan | awk -F'\t' -v b="$(norm_mac "$bssid")" 'tolower($1)==b')"
+	[ -n "$line" ] || die "connected to '$ssid' but it was not in the scan — retry"
+	IFS=$'\t' read -r bssid rssi _ caps ssid <<<"$line"
+	print_assessment "$ssid" "$bssid" "$rssi" "$caps"
+}
+
+cmd_engagement() {
+	case "${1:-}" in
+		init)
+			[ -f "$ENGAGEMENT" ] && die "$ENGAGEMENT already exists"
+			cp "$SELF_DIR/engagement.example.conf" "$ENGAGEMENT"; chmod 0600 "$ENGAGEMENT"
+			echo "wrote $ENGAGEMENT — set AUTHORIZATION_REF and SCOPE_SSIDS (your own networks) before auditing." ;;
+		validate) require_engagement; echo "engagement OK: $(eng_get NAME) (auth: $(eng_get AUTHORIZATION_REF))" ;;
+		*) die "usage: jaa-wifi engagement init|validate" ;;
+	esac
+}
+
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+
+cmd="${1:-help}"; [ $# -gt 0 ] && shift
+case "$cmd" in
+	engagement) cmd_engagement "$@" ;;
+	scope) [ "${1:-}" = check ] && { shift; cmd_scope_check "$@"; } || die "usage: jaa-wifi scope check SSID [BSSID]" ;;
+	audit) cmd_audit "$@" ;;
+	check-own) cmd_check_own "$@" ;;
+	help|-h|--help) usage ;;
+	*) usage >&2; exit 2 ;;
+esac

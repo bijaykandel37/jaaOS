@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# lineage-device-info <codename> — print what jaaOS needs to install on a given phone, by querying
+# the official LineageOS metadata, so the install flow works on ANY officially-supported device,
+# not just the ones jaaOS has hand-documented. Output is KEY=VALUE lines (data, for other tools).
+#
+#   lineage-device-info a71
+#     CODENAME=a71
+#     NAME=Galaxy A71
+#     VENDOR=Samsung
+#     MODELS=SM-A715F SM-A715F/DS SM-A715F/DSN SM-A715F/DSM
+#     REQ_ANDROID=13
+#     LINEAGE_VERSIONS=23.2
+#     QUIRKS=ims
+#     INFO_URL=https://wiki.lineageos.org/devices/a71
+#     CURATED=yes|no          # yes = jaaOS has a tested device guide (mobile/devices/<codename>.md)
+#     SOURCE=live|offline
+#
+# Sources: the LineageOS wiki device data (raw.githubusercontent.com) + the download API
+# (download.lineageos.org). Falls back to mobile/devices/supported.txt with no network.
+# Tests set JAA_DEVICE_YAML / JAA_DEVICE_API to local files.
+set -euo pipefail
+SELF_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+SUPPORTED="${JAA_DEVICE_SUPPORTED:-$SELF_DIR/supported.txt}"
+WIKI="https://raw.githubusercontent.com/LineageOS/lineage_wiki/main/_data/devices"
+API="https://download.lineageos.org/api/v2/devices"
+
+code="${1:-}"
+[[ "$code" =~ ^[A-Za-z0-9_]+$ ]] || { echo "usage: lineage-device-info CODENAME (letters/digits/_)" >&2; exit 2; }
+
+curated=no
+[ -f "$SELF_DIR/$code.md" ] && curated=yes
+
+fetch() { curl -sSfL -m 25 "$1" 2>/dev/null; }
+
+yaml="${JAA_DEVICE_YAML:-}"; api="${JAA_DEVICE_API:-}"
+# JAA_DEVICE_OFFLINE=1 skips the network and uses the curated list (deterministic tests).
+if [ "${JAA_DEVICE_OFFLINE:-0}" = 1 ]; then yaml=""; api=""; fi
+if [ -z "$yaml" ] && [ "${JAA_DEVICE_OFFLINE:-0}" != 1 ]; then yaml="$(fetch "$WIKI/$code.yml" || true)"; fi
+if [ -z "$api" ] && [ "${JAA_DEVICE_OFFLINE:-0}" != 1 ]; then api="$(fetch "$API/$code" || true)"; elif [ -n "$api" ]; then api="$(cat "$api")"; fi
+[ -n "${JAA_DEVICE_YAML:-}" ] && yaml="$(cat "$JAA_DEVICE_YAML")"
+
+if [ -z "$yaml" ]; then
+	# No network (or unknown device): fall back to the curated offline list.
+	row="$(awk -F'|' -v c="$code" '$0 !~ /^[[:space:]]*#/ { k=$1; gsub(/^[ \t]+|[ \t]+$/,"",k); if (k==c) print }' "$SUPPORTED" 2>/dev/null | head -1)"
+	[ -n "$row" ] || { echo "no LineageOS metadata for '$code' (offline, and not in $SUPPORTED)" >&2; exit 1; }
+	IFS="|" read -r _ models req lineage _ quirks <<<"$row"
+	printf 'CODENAME=%s\nNAME=%s\nVENDOR=%s\nMODELS=%s\nREQ_ANDROID=%s\nLINEAGE_VERSIONS=%s\nQUIRKS=%s\nINFO_URL=https://wiki.lineageos.org/devices/%s\nCURATED=%s\nSOURCE=offline\n' \
+		"$code" "$code" "" "$(xargs <<<"$models")" "$(xargs <<<"$req" | grep -oE '[0-9]+' | head -1)" "$(xargs <<<"$lineage" | grep -oE '[0-9.]+' | head -1)" "$(xargs <<<"${quirks:-}")" "$code" "$curated"
+	exit 0
+fi
+
+# Parse the YAML flow-style fields we need (no PyYAML dependency). The fetched content is passed
+# through the ENVIRONMENT (never interpolated into the script) so nothing in it can be executed.
+JAA_Y="$yaml" JAA_A="$api" JAA_CODE="$code" JAA_CURATED="$curated" python3 -I - <<'PY'
+import os, re
+code, curated = os.environ["JAA_CODE"], os.environ["JAA_CURATED"]
+y = os.environ.get("JAA_Y", "")
+a = os.environ.get("JAA_A", "")
+def one(key):
+    m = re.search(r'(?m)^%s:\s*(.+)$' % re.escape(key), y)
+    return m.group(1).strip().strip("'\"") if m else ""
+def flow(key):
+    m = re.search(r'(?m)^%s:\s*\[(.*?)\]' % re.escape(key), y)
+    if not m: return []
+    return [x.strip().strip("'\"") for x in m.group(1).split(',') if x.strip()]
+name = one("name"); vendor = one("vendor")
+models = flow("models") or ([one("codename")] if one("codename") else [code])
+quirks = flow("quirks")
+bi = re.search(r'before_install:\s*\{([^}]*)\}', y)
+req = ""
+if bi:
+    vm = re.search(r"(?<![A-Za-z_])version:\s*'?([0-9]+)", bi.group(1))  # not lineage_version:
+    if vm: req = vm.group(1)      # first number of e.g. '13' or '13/15'
+# LineageOS versions from the download API if we have it, else from the wiki 'versions' list.
+vers = []
+m = re.search(r'"versions"\s*:\s*\[([^\]]*)\]', a)
+if m:
+    vers = [x.strip().strip('"') for x in m.group(1).split(',') if x.strip()]
+if not vers:
+    vers = flow("versions")
+print("CODENAME=%s" % code)
+print("NAME=%s" % name)
+print("VENDOR=%s" % vendor)
+print("MODELS=%s" % " ".join(models))
+print("REQ_ANDROID=%s" % req)
+print("LINEAGE_VERSIONS=%s" % " ".join(vers))
+print("QUIRKS=%s" % " ".join(quirks))
+print("INFO_URL=https://wiki.lineageos.org/devices/%s" % code)
+print("CURATED=%s" % curated)
+print("SOURCE=live")
+PY
