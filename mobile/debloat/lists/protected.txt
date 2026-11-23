@@ -1,0 +1,32 @@
+# Never removed, even if a list (or --package) names them. Shell glob patterns, one per line.
+# These keep the phone a phone: calls, SMS, camera, sensors, keyboard, lock screen, Secure Folder.
+android
+com.android.systemui
+com.android.settings
+com.android.phone
+com.android.server.telecom
+com.android.providers.*
+com.android.bluetooth
+com.android.nfc
+com.android.shell
+com.android.permissioncontroller
+com.android.networkstack*
+com.google.android.webview
+com.android.webview
+*camera*
+com.sec.android.app.launcher
+com.sec.android.app.SecSetupWizard
+com.samsung.android.dialer
+com.samsung.android.messaging
+com.samsung.android.honeyboard
+com.samsung.android.biometrics*
+com.samsung.android.knox.*
+com.samsung.knox.*
+com.samsung.android.lool
+com.samsung.android.incallui
+com.samsung.android.app.telephonyui
+com.sec.imsservice
+com.sec.android.app.myfiles
+com.sec.android.gallery3d
+com.sec.android.app.sbrowser
+com.samsung.android.fmm

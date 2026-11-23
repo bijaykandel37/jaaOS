@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# build/mklive.sh — build the jaaOS LITE live ISO: a small, console-first jaaOS that boots
-# from a DVD or a USB stick (write the .iso with dd) on both BIOS and UEFI machines.
+# build/mklive.sh — build a jaaOS live ISO that boots from a DVD or a USB stick (write the .iso
+# with dd) on both BIOS and UEFI machines. Two editions:
+#   lite    — console only (default)                       -> out/jaaos-lite.iso
+#   desktop — lite + XFCE desktop, Firefox, sound, auto-login -> out/jaaos-desktop.iso
 #
 #   sudo build/mklive.sh                 # -> out/jaaos-lite.iso  (no vendor firmware; VMs + most wired NICs)
+#   sudo EDITION=desktop build/mklive.sh # -> out/jaaos-desktop.iso (build/profiles/desktop-xfce.packages)
 #   sudo FIRMWARE=1 build/mklive.sh      # + WiFi/GPU firmware and CPU microcode for real laptops
 #   sudo AIRGAP=1 build/mklive.sh        # + RKE2 images (~800 MB) so clusters start with no internet
 #
@@ -29,13 +32,21 @@
 #   COMP=zstd         faster build, larger ISO (default xz = smallest)
 #   SNAPSHOT=...      snapshot.debian.org timestamp, pinned for reproducibility
 #   MIRROR=... SECMIRROR=...   e.g. MIRROR=https://deb.debian.org/debian SECMIRROR=https://deb.debian.org/debian-security
-#   ISO=path          output path (default out/jaaos-lite.iso)
+#   EDITION=desktop   add the XFCE desktop (build/profiles/desktop-xfce.packages); keeps sound
+#                     and webcam/TV drivers that the lite edition trims
+#   ISO=path          output path (default out/jaaos-<edition>.iso)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/out"
-WORK="$OUT/live"
-ISO="${ISO:-$OUT/jaaos-lite.iso}"
+EDITION="${EDITION:-lite}"
+case "$EDITION" in
+	lite)    LABEL=JAAOS_LITE;    TITLE="jaaOS lite" ;;
+	desktop) LABEL=JAAOS_DESKTOP; TITLE="jaaOS desktop" ;;
+	*) echo "mklive: EDITION must be lite or desktop" >&2; exit 1 ;;
+esac
+WORK="$OUT/live-$EDITION"
+ISO="${ISO:-$OUT/jaaos-$EDITION.iso}"
 
 SUITE="${SUITE:-trixie}"
 ARCH="${ARCH:-amd64}"
@@ -74,6 +85,7 @@ trap 'rm -f "$KR_STAGE"' EXIT
 pkglist() { sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' "$@"; }
 PROFILES=("$ROOT/build/profiles/lite.packages" "$ROOT/build/profiles/cluster.packages")
 [ "$FIRMWARE" = 1 ] && PROFILES+=("$ROOT/build/profiles/lite-firmware.packages")
+[ "$EDITION" = desktop ] && PROFILES+=("$ROOT/build/profiles/desktop-xfce.packages")
 PKGS="$(pkglist "${PROFILES[@]}" | sort -u | paste -sd, -)"
 
 # Size control: never unpack docs, man/info pages, translations or lintian data (copyright
@@ -88,12 +100,15 @@ DPKG_OPTS=(
 	--dpkgopt='path-exclude=/usr/share/lintian/*'
 )
 if [ "$TRIM_MODULES" = 1 ]; then
-	for d in drivers/infiniband drivers/media drivers/staging drivers/isdn sound; do
+	TRIM_DIRS=(drivers/infiniband drivers/staging drivers/isdn)
+	# A desktop needs sound and webcams; the console edition does not.
+	[ "$EDITION" = desktop ] || TRIM_DIRS+=(drivers/media sound)
+	for d in "${TRIM_DIRS[@]}"; do
 		DPKG_OPTS+=(--dpkgopt="path-exclude=/usr/lib/modules/*/kernel/$d/*")
 	done
 fi
 
-echo "== jaaOS lite live ISO =="
+echo "== $TITLE live ISO =="
 echo "suite=$SUITE arch=$ARCH firmware=$FIRMWARE airgap=$AIRGAP trim_modules=$TRIM_MODULES comp=$COMP"
 
 # Pinned, hash-verified RKE2 release (fetched before the long rootfs step so a bad pin fails fast).
@@ -119,7 +134,7 @@ mmdebstrap \
 	--customize-hook="sync-in '$ROOT/config/rootfs' /" \
 	--customize-hook="copy-in '$ROOT/build/hooks/10-customize.sh' '$ROOT/build/hooks/20-live.sh' /tmp/" \
 	--customize-hook="chroot \$1 bash /tmp/10-customize.sh" \
-	--customize-hook="chroot \$1 bash /tmp/20-live.sh" \
+	--customize-hook="chroot \$1 env JAA_EDITION=$EDITION bash /tmp/20-live.sh" \
 	--customize-hook="chroot \$1 rm -f /tmp/10-customize.sh /tmp/20-live.sh" \
 	"$SUITE" \
 	"$CHROOT" \
@@ -164,15 +179,15 @@ set timeout=5
 set default=0
 insmod all_video
 
-menuentry "jaaOS lite (live)" {
+menuentry "$TITLE (live)" {
 	linux /live/vmlinuz boot=live $CMDLINE
 	initrd /live/initrd.img
 }
-menuentry "jaaOS lite (live, copy to RAM — the USB stick can be removed)" {
+menuentry "$TITLE (live, copy to RAM — the USB stick can be removed)" {
 	linux /live/vmlinuz boot=live toram $CMDLINE
 	initrd /live/initrd.img
 }
-menuentry "jaaOS lite (live, safe graphics)" {
+menuentry "$TITLE (live, safe graphics)" {
 	linux /live/vmlinuz boot=live nomodeset $CMDLINE
 	initrd /live/initrd.img
 }
@@ -180,7 +195,7 @@ EOF
 
 # 6) Hybrid ISO: BIOS (El Torito + MBR) and UEFI (EFI system image), dd-able to USB.
 rm -f "$ISO"
-grub-mkrescue -o "$ISO" "$WORK/iso" -- -volid JAAOS_LITE 2>&1 | grep -v '^xorriso : UPDATE' || true
+grub-mkrescue -o "$ISO" "$WORK/iso" -- -volid "$LABEL" 2>&1 | grep -v '^xorriso : UPDATE' || true
 [ -s "$ISO" ] || { echo "mklive: grub-mkrescue did not produce $ISO" >&2; exit 1; }
 (cd "$(dirname "$ISO")" && sha256sum "$(basename "$ISO")" > "$(basename "$ISO").sha256")
 

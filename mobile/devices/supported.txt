@@ -1,0 +1,6 @@
+# Phones with an official LineageOS build that jaaOS Mobile has a TESTED device guide for. This is
+# the OFFLINE fallback + "curated" marker; `lineage-device-info` / `rom-check` work on ANY official
+# LineageOS device via a live lookup of the LineageOS metadata. Data, never sourced.
+# Checked against wiki.lineageos.org on 2026-11-22.
+# codename | models (exact match) | stock Android required | LineageOS | guide | quirks
+a71 | SM-A715F SM-A715F/DS SM-A715F/DSN SM-A715F/DSM | 13 | 23.2 (Android 16) | mobile/devices/a71.md | ims

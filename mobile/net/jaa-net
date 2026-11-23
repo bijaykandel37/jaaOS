@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# jaa-net — see and manage the WiFi network you are connected to, like an administrator.
+# Discovers every device, tracks who joins and leaves, shows what each one exposes, and serves a
+# dashboard. AUTHORIZED NETWORKS ONLY — same contract as jaa-scan/jaa-wifi: it refuses to scan a
+# network that is not in your engagement scope, and audits every run.
+# (prototype / behavioural spec; runs on the phone in Termux.)
+#
+#   jaa-net map                 # list every device on this network (table)
+#   jaa-net map --json          # the same as JSON (what the dashboard reads)
+#   jaa-net device 192.168.1.20 # ports + services on one in-scope device
+#   jaa-net watch               # keep scanning; alert when a device joins or leaves
+#   jaa-net serve               # dashboard at http://127.0.0.1:8088 (hacker-vibe UI)
+#   jaa-net block 192.168.1.20  # block a device the ADMINISTRATOR way (via the router)
+#
+# What it can and cannot do, honestly:
+#  - It shows WHO is on the network and what services they expose. It does NOT show the CONTENTS
+#    of other devices' traffic: on WiFi that needs ARP-spoofing/MITM, which is an attack jaaOS
+#    does not do.
+#  - `block` uses the ROUTER's own controls (you are the admin of your network). It does NOT
+#    ARP-spoof/"kick" devices (the NetCut/WiFiKill method) — that attacks other people's devices
+#    and is excluded by jaaOS policy (no DoS tooling). See docs/13-mobile-netadmin.md.
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+ENGAGEMENT="${JAA_WIFI_ENGAGEMENT:-./wifi-engagement.conf}"
+STATE="${JAA_NET_STATE:-${XDG_DATA_HOME:-$HOME/.local/share}/jaa-net}"
+AUDIT="${JAA_NET_AUDIT:-$STATE/audit.log}"
+BASELINE="$STATE/baseline.json"
+DASHBOARD="$SELF_DIR/dashboard"
+PORT="${JAA_NET_PORT:-8088}"
+OUI="${JAA_NET_OUI:-${PREFIX:-/data/data/com.termux/files/usr}/share/nmap/nmap-mac-prefixes}"
+
+die()  { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARN: $*" >&2; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+eng_get() { sed -n "s/^$1=//p" "$ENGAGEMENT" 2>/dev/null | head -1; }
+eng_list() { eng_get "$1" | grep -oE '"[^"]*"|[^[:space:]]+' | sed 's/^"//; s/"$//'; }
+norm_mac() { tr 'A-F' 'a-f' <<<"$1"; }
+
+require_engagement() {
+	[ -f "$ENGAGEMENT" ] || die "no engagement file ($ENGAGEMENT). Create one: jaa-wifi engagement init"
+	[ -n "$(eng_get AUTHORIZATION_REF)" ] || die "engagement has no AUTHORIZATION_REF — authorization is mandatory"
+}
+
+# Connected network details. Overridable for tests.
+NET_SSID=""; NET_BSSID=""; NET_IP=""; NET_GW=""; NET_CIDR=""
+discover_self() {
+	NET_SSID="${JAA_NET_SSID-}"; NET_BSSID="${JAA_NET_BSSID-}"
+	NET_IP="${JAA_NET_IP-}"; NET_GW="${JAA_NET_GW-}"; NET_CIDR="${JAA_NET_CIDR-}"
+	if [ -z "$NET_SSID$NET_IP" ] && have termux-wifi-connectioninfo && have jq; then
+		local info; info="$(termux-wifi-connectioninfo 2>/dev/null)"
+		NET_SSID="$(jq -r '.ssid // empty' <<<"$info" | sed 's/^"//; s/"$//')"
+		NET_BSSID="$(jq -r '.bssid // empty' <<<"$info")"
+		NET_IP="$(jq -r '.ip // empty' <<<"$info")"
+	fi
+	if [ -z "$NET_GW" ] && have ip; then NET_GW="$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')"; fi
+	if [ -z "$NET_CIDR" ] && [ -n "$NET_IP" ] && have ip; then
+		NET_CIDR="$(ip -o -f inet addr show 2>/dev/null | awk -v ip="$NET_IP" '$4 ~ ip"/"{print $4; exit}')"
+	fi
+	[ -n "$NET_CIDR" ] || [ -z "$NET_IP" ] || NET_CIDR="$NET_IP/24"
+	[ "$NET_BSSID" = null ] && NET_BSSID="" || true
+	[ "$NET_IP" = null ] && NET_IP="" || true
+	return 0
+}
+
+# Does $NET_IP fall inside any of the given CIDR subnets? (proper containment, not string match)
+ip_in_subnets() { # <subnet...>
+	[ -n "$NET_IP" ] && [ $# -gt 0 ] || return 1
+	python3 -I -c '
+import ipaddress, sys
+try: ip = ipaddress.ip_address(sys.argv[1])
+except ValueError: sys.exit(1)
+for net in sys.argv[2:]:
+    try:
+        if ip in ipaddress.ip_network(net, strict=False): sys.exit(0)
+    except ValueError: pass
+sys.exit(1)' "$NET_IP" "$@" 2>/dev/null
+}
+
+# The connected network must be authorized (by SSID, BSSID, or subnet). Exclusions always win.
+network_authorized() {
+	local x subs=()
+	# --- exclusions first (they win over any scope entry) ---
+	while IFS= read -r x; do [ -n "$x" ] && [ "$x" = "$NET_SSID" ] && { echo "the connected network '$NET_SSID' is in EXCLUDE_SSIDS"; return 1; }; done < <(eng_list EXCLUDE_SSIDS)
+	while IFS= read -r x; do [ -n "$x" ] && [ -n "$NET_BSSID" ] && [ "$(norm_mac "$x")" = "$(norm_mac "$NET_BSSID")" ] && { echo "the connected AP ($NET_BSSID) is in EXCLUDE_BSSIDS"; return 1; }; done < <(eng_list EXCLUDE_BSSIDS)
+	mapfile -t subs < <(eng_list EXCLUDE_SUBNETS); [ "${#subs[@]}" -eq 0 ] || ! ip_in_subnets "${subs[@]}" || { echo "the connected subnet ($NET_CIDR) is in EXCLUDE_SUBNETS"; return 1; }
+	# --- scope ---
+	while IFS= read -r x; do [ -n "$x" ] && [ "$x" = "$NET_SSID" ] && return 0; done < <(eng_list SCOPE_SSIDS)
+	while IFS= read -r x; do [ -n "$x" ] && [ -n "$NET_BSSID" ] && [ "$(norm_mac "$x")" = "$(norm_mac "$NET_BSSID")" ] && return 0; done < <(eng_list SCOPE_BSSIDS)
+	mapfile -t subs < <(eng_list SCOPE_SUBNETS); [ "${#subs[@]}" -eq 0 ] || ! ip_in_subnets "${subs[@]}" || return 0
+	echo "the connected network (ssid='${NET_SSID:-?}', subnet='${NET_CIDR:-?}') is not in your engagement scope (SCOPE_SSIDS/SCOPE_BSSIDS/SCOPE_SUBNETS). Add it only if you own or are authorized to manage it."
+	return 1
+}
+
+neigh_mac() { # <ip> -> its MAC from the ARP table, or empty (never fails)
+	local src=""
+	if [ -n "${JAA_NET_NEIGH:-}" ]; then src="$(cat "$JAA_NET_NEIGH" 2>/dev/null || true)"
+	elif have ip; then src="$(ip neigh 2>/dev/null || true)"; fi
+	awk -v i="$1" '$1==i{for(k=1;k<=NF;k++) if($k=="lladdr"){print $(k+1); exit}}' <<<"$src"
+}
+
+audit() { mkdir -p "$(dirname "$AUDIT")"; printf '%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$(eng_get OPERATOR)" "auth=$(eng_get AUTHORIZATION_REF)" "$*" >> "$AUDIT"; }
+
+preflight() {
+	require_engagement; discover_self
+	local reason; reason="$(network_authorized)" || die "$reason"
+	[ -n "$NET_CIDR" ] || die "could not determine this network's subnet (are you connected to WiFi?)"
+	[ -n "${JAA_NET_SCAN:-}" ] || have nmap || die "nmap not found — pkg install nmap"
+	have python3 || die "python3 not found — pkg install python"
+}
+
+# Run a scan of the whole subnet -> JSON on stdout. $1 = "ports" to also do a fast port scan.
+run_scan() {
+	local want_ports="${1:-}" xml neigh
+	xml="$(mktemp)"; neigh="$(mktemp)"
+	if [ -n "${JAA_NET_SCAN:-}" ]; then
+		cp "$JAA_NET_SCAN" "$xml"
+		[ -n "${JAA_NET_NEIGH:-}" ] && cp "$JAA_NET_NEIGH" "$neigh"
+	else
+		local args=(-sn -n --max-retries 1)
+		[ "$want_ports" = ports ] && args=(-F -T4 -n --max-retries 1)
+		nmap "${args[@]}" -oX "$xml" "$NET_CIDR" >/dev/null 2>&1 || warn "nmap returned non-zero"
+		have ip && ip neigh > "$neigh" 2>/dev/null || true
+	fi
+	local out rc
+	if out="$(python3 -I "$SELF_DIR/jaa-net-scan.py" --xml "$xml" --neigh "$neigh" \
+		${OUI:+--oui "$OUI"} --self "$NET_IP" --gateway "$NET_GW" --ssid "$NET_SSID" \
+		--baseline "$BASELINE")"; then rc=0; else rc=$?; fi
+	rm -f "$xml" "$neigh"            # always clean up, even when the scanner failed
+	printf '%s\n' "$out"
+	return "$rc"
+}
+
+print_table() { # reads the scan JSON on stdin
+	have jq || { cat; return; }
+	jq -r '
+		"  " + ("DEVICES ON " + (.ssid // "?") + "  (" + (.counts.total|tostring) + " up, " + (.counts.new|tostring) + " new, " + (.counts.left|tostring) + " left)"),
+		"  " + ("-"*74),
+		(.devices[] |
+			"  " +
+			(if .is_gateway then "[GW] " elif .is_self then "[ME] " elif .status=="new" then "[NEW] " else "     " end) +
+			(.ip + "              ")[0:16] +
+			((.mac // "") + "                   ")[0:19] +
+			((.vendor // (.hostname // "") )[0:20] + "                    ")[0:21] +
+			( if (.open_ports|length)>0 then ("ports: " + ([.open_ports[].port|tostring]|join(","))) else "" end)
+		)
+	'
+}
+
+cmd_map() {
+	local as_json=0; [ "${1:-}" = --json ] && as_json=1
+	preflight; audit "map $NET_CIDR (ssid=$NET_SSID)"
+	mkdir -p "$STATE"
+	local json; json="$(run_scan)"
+	printf '%s' "$json" > "$BASELINE.new"
+	if [ "$as_json" = 1 ]; then printf '%s\n' "$json"
+	else printf '%s\n' "$json" | print_table; fi
+	mv "$BASELINE.new" "$BASELINE"
+}
+
+cmd_device() {
+	local ip="${1:-}"; [ -n "$ip" ] || die "usage: jaa-net device IP"
+	[[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "not an IPv4 address: $ip"
+	preflight
+	# The device must be on the authorized subnet.
+	python3 -I -c "import ipaddress,sys; sys.exit(0 if ipaddress.ip_address('$ip') in ipaddress.ip_network('$NET_CIDR',strict=False) else 1)" \
+		|| die "$ip is not on the authorized network $NET_CIDR"
+	audit "device $ip"
+	if [ -n "${JAA_NET_SCAN:-}" ]; then run_scan ports | (have jq && jq ".devices[] | select(.ip==\"$ip\")" || cat); return; fi
+	echo "Scanning services on $ip (authorized network $NET_CIDR)…"
+	nmap -sV -F -T4 "$ip"
+}
+
+cmd_watch() {
+	local interval="${JAA_NET_INTERVAL:-60}"
+	while [ $# -gt 0 ]; do case "$1" in --interval) interval="${2:-}"; shift 2;; *) die "unknown option: $1";; esac; done
+	[[ "$interval" =~ ^[1-9][0-9]*$ ]] || die "--interval seconds"
+	preflight; audit "watch $NET_CIDR interval=${interval}s"
+	echo "Watching $NET_SSID ($NET_CIDR) every ${interval}s. Ctrl+C to stop."
+	mkdir -p "$STATE"
+	while :; do
+		local json new left
+		json="$(run_scan)"
+		new="$(printf '%s' "$json" | jq -r '.devices[] | select(.status=="new") | "  + JOINED  " + .ip + "  " + ((.mac//"") ) + "  " + (.vendor//"")')"
+		left="$(printf '%s' "$json" | jq -r '.left[]? | "  - LEFT    " + .ip + "  " + ((.mac//""))')"
+		if [ -n "$new$left" ]; then
+			echo "[$(date +%H:%M:%S)] change on $NET_SSID:"
+			[ -n "$new" ] && echo "$new" || true
+			[ -n "$left" ] && echo "$left" || true
+			have jaa-alert && [ -n "$new" ] && jaa-alert "jaa-net: device joined $NET_SSID" >/dev/null 2>&1 || true
+		fi
+		printf '%s' "$json" > "$BASELINE"
+		sleep "$interval"
+	done
+}
+
+cmd_serve() {
+	while [ $# -gt 0 ]; do case "$1" in --port) PORT="${2:-}"; shift 2;; *) die "unknown option: $1";; esac; done
+	{ [[ "$PORT" =~ ^[0-9]{1,5}$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; } || die "--port must be 1-65535 (default 8088)"
+	preflight; audit "serve dashboard on 127.0.0.1:$PORT"
+	[ -f "$DASHBOARD/index.html" ] || die "dashboard files missing ($DASHBOARD)"
+	local web; web="$(mktemp -d)"; cp "$DASHBOARD"/* "$web/"
+	run_scan ports > "$web/data.json" || true
+	cp "$web/data.json" "$BASELINE" 2>/dev/null || true
+	# Refresh with light host-discovery only (not a full port scan) while the page is open;
+	# ports found by the initial scan are carried forward per device by jaa-net-scan.py.
+	( while :; do sleep "${JAA_NET_INTERVAL:-30}"; run_scan > "$web/data.json.tmp" 2>/dev/null && mv "$web/data.json.tmp" "$web/data.json"; done ) &
+	local refresher=$!
+	trap 'kill $refresher 2>/dev/null; rm -rf "$web"' EXIT
+	echo "jaaOS network dashboard: http://127.0.0.1:$PORT  (open it in your browser; Ctrl+C to stop)"
+	echo "From a laptop (set PHONE to this phone's WiFi IP, the [ME] device in 'jaa-net map'):"
+	echo "  ssh -p 8022 -L $PORT:127.0.0.1:$PORT \"\$PHONE\"   then open http://localhost:$PORT"
+	( cd "$web" && python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1 )
+}
+
+cmd_block() {
+	local target="${1:-}"; [ -n "$target" ] || die "usage: jaa-net block IP|MAC"
+	preflight; audit "block request: $target"
+	local ip="" mac=""
+	if [[ "$target" =~ ^[0-9a-fA-F:]{17}$ ]]; then mac="$(norm_mac "$target")"
+	elif [[ "$target" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+		ip="$target"; mac="$(neigh_mac "$ip")"
+	else die "give an IP (192.168.1.20) or a MAC (aa:bb:cc:dd:ee:ff)"; fi
+	cat <<EOF
+
+Blocking a device on WiFi is only legitimate as the network's ADMINISTRATOR, through the router.
+jaaOS does NOT ARP-spoof / "kick" devices (the NetCut method): that attacks another device's
+connection and is excluded by policy (docs/13-mobile-netadmin.md).
+
+To block this device, as the admin of $NET_SSID:
+  target:   ${ip:-?}   MAC: ${mac:-unknown (talk to the device once so it enters the ARP table, or read it from the router)}
+  1. Open your router's admin page:   http://$NET_GW
+  2. Sign in (admin credentials are on the router label if never changed — change them!).
+  3. Find "MAC filtering" / "Access control" / "Device management" / "Block".
+  4. Add the MAC above to the block/deny list, or toggle the device off, and save.
+Most routers also let you set this per-device permanently and schedule internet pauses.
+
+If you administer this network through an API (e.g. a UniFi/OpenWrt controller), use that
+controller's own block command — jaa-net does not store router credentials.
+EOF
+}
+
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
+
+cmd="${1:-help}"; [ $# -gt 0 ] && shift
+case "$cmd" in
+	map)    cmd_map "$@" ;;
+	device) cmd_device "$@" ;;
+	watch)  cmd_watch "$@" ;;
+	serve)  cmd_serve "$@" ;;
+	block)  cmd_block "$@" ;;
+	help|-h|--help) usage ;;
+	*) usage >&2; exit 2 ;;
+esac

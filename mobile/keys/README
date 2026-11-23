@@ -1,0 +1,3 @@
+lineageos_pubkey: LineageOS release-key public key, copied from
+https://github.com/LineageOS/update_verifier (lineageos_pubkey). Used by `jaa-mobile verify-image`
+to check that a LineageOS update zip is signed by LineageOS.

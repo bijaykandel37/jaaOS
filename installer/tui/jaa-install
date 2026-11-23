@@ -71,10 +71,11 @@ else
 	[ "${#DISKS[@]}" -gt 0 ] || die "no disks found"
 	menu=(); for d in "${DISKS[@]}"; do menu+=("$(echo "$d" | awk '{print $1}')" "$(echo "$d" | cut -d' ' -f2-)"); done
 	TARGET_DISK="$(whiptail --title "jaaOS installer" --menu "Select the target disk (ALL DATA WILL BE ERASED)" 20 70 10 "${menu[@]}" 3>&1 1>&2 2>&3)" || exit 1
-	PROFILE="$(whiptail --title "Profile" --menu "Install profile" 16 60 4 \
+	PROFILE="$(whiptail --title "Profile" --menu "Install profile" 17 64 5 \
 		minimal "Base + SSH + firewall (no GUI)" \
 		server "Minimal + containers + monitoring base" \
-		desktop "GNOME desktop (Wayland)" \
+		desktop-xfce "XFCE desktop (light, X11) - like the live ISO" \
+		desktop "GNOME desktop (Wayland, heavier)" \
 		security-lab "Desktop + VAPT container tooling" 3>&1 1>&2 2>&3)" || exit 1
 	CLUSTER_ROLE="$(whiptail --title "Kubernetes (RKE2)" --menu "What is this machine in a Kubernetes cluster?\nDocker is installed in every case." 15 74 3 \
 		none   "Not part of a cluster" \

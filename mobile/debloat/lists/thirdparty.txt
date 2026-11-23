@@ -1,0 +1,11 @@
+# Third-party apps and "stubs" pre-installed by Samsung or carriers. Removing them loses nothing
+# of the phone itself; install the real app later if you want it.
+safe       com.facebook.appmanager                     # Facebook App Manager (silent updater)
+safe       com.facebook.services                       # Facebook Services
+safe       com.facebook.system                         # Facebook App Installer
+safe       com.facebook.katana                         # Facebook
+safe       com.netflix.partner.activation              # Netflix partner stub
+safe       com.netflix.mediaclient                     # Netflix
+safe       com.spotify.music                           # Spotify
+safe       com.microsoft.skydrive                      # OneDrive
+safe       com.linkedin.android                        # LinkedIn

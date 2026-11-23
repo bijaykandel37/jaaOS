@@ -1,0 +1,26 @@
+# Google packages preinstalled on Samsung phones.   Format: <tier> <package>  # what you lose
+# Tiers: safe < standard < aggressive. `jaa-debloat plan --tier T` includes every tier up to T.
+# Everything is removed for the phone's owner only (pm uninstall --user 0) and comes back with
+# `jaa-debloat restore` or a factory reset. Nothing here touches the bootloader or Knox.
+safe       com.google.android.feedback                 # Google feedback reporter
+safe       com.google.android.apps.turbo               # "Device Health Services" (battery predictions)
+safe       com.google.android.videos                   # Google TV / Play Movies
+safe       com.google.android.apps.tachyon             # Google Meet (ex-Duo)
+safe       com.google.android.apps.youtube.music       # YouTube Music
+standard   com.google.android.youtube                  # YouTube app (the website still works)
+standard   com.google.android.apps.maps                # Google Maps — install an alternative (e.g. Organic Maps / OsmAnd) first
+standard   com.google.android.gm                       # Gmail — Samsung Email or K-9/Thunderbird replace it
+standard   com.google.android.apps.docs                # Google Drive
+standard   com.google.android.apps.photos              # Google Photos — Samsung Gallery stays
+standard   com.android.chrome                          # Chrome — Samsung Internet stays; WebView is protected separately
+standard   com.google.android.googlequicksearchbox     # Google app / search bar / "Hey Google"
+standard   com.google.android.apps.googleassistant     # Google Assistant shortcut
+standard   com.google.android.apps.messaging           # Google Messages (only if Samsung Messages is your SMS app!)
+standard   com.google.android.tts                      # Google text-to-speech (Samsung TTS stays)
+aggressive com.google.ar.core                          # ARCore — some AR camera/measure features stop working
+aggressive com.google.android.gms                      # Play Services: NO push notifications for many apps, weaker location, no Google sign-in, Google Pay, Find My Device
+aggressive com.google.android.gsf                      # Google Services Framework (goes with Play Services)
+aggressive com.android.vending                         # Play Store — use F-Droid / Aurora Store / Galaxy Store instead
+aggressive com.google.android.partnersetup             # Google partner setup
+aggressive com.google.android.syncadapters.contacts    # Google contacts sync (keep contacts on the phone or a Samsung account)
+aggressive com.google.android.syncadapters.calendar    # Google calendar sync
