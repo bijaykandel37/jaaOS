@@ -147,6 +147,18 @@ everything) > **Cloud Messaging** on. Without microG (`pure`), there is no Googl
 mobile/jaa-mobile install-apk ~/Downloads/app.apk
 ```
 
+**Default apps (Brave browser, VLC media player):** **VLC** is in `apps.lock`, so `jaa-mobile
+setup` already installed it. **Brave is not on F-Droid**, so install it from the **Aurora Store**
+(search "Brave"). Then set both as defaults:
+
+```bash
+mobile/jaa-mobile set-default
+```
+
+It sets Brave as the default browser (Android's browser role, over adb). Android has no system
+"default media player" switch, so the first time you open a media file, pick **VLC** and tap
+**Always** — it then stays the default. (`set-default --browser PKG --media PKG` picks others.)
+
 ## Step 5 — DevOps + security toolkit (on the phone, in Termux)
 
 ```bash

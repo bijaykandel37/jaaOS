@@ -38,6 +38,10 @@ case "$*" in
 	"cmd netpolicy get restrict-background") echo "Restrict background status: enabled" ;;
 	"pm list users") echo "Users:"; echo "	UserInfo{0:Owner:c13} running" ;;
 	"pm get-max-users") echo "Maximum supported users: 4" ;;
+	"pm list packages")
+		echo "package:org.videolan.vlc"; [ "${FAKE_BRAVE:-0}" = 1 ] && echo "package:com.brave.browser" ;;
+	"cmd role add-role-holder android.app.role.BROWSER "*) echo "$*" >> "$FAKE_DIR/roles.log" ;;
+	"cmd role get-role-holders android.app.role.BROWSER") [ "${FAKE_BRAVE:-0}" = 1 ] && echo "com.brave.browser" ;;
 esac
 EOF
 chmod +x "$SBX/adb"
@@ -110,6 +114,18 @@ bash "$CLI" audit verify >/dev/null 2>&1; check "deleted audit line detected" te
 echo "== workspace =="
 out="$(bash "$CLI" workspace 2>&1)"
 check "workspace shows max users + Private space" sh -c "echo \"\$0\" | grep -q 'Maximum users: 4' && echo \"\$0\" | grep -q 'Private space'" "$out"
+
+echo "== set-default (Brave browser, VLC media) =="
+: > "$SBX/roles.log"
+out="$(FAKE_BRAVE=1 bash "$CLI" set-default 2>&1)"
+check "sets the browser role to Brave when installed" grep -qx 'cmd role add-role-holder android.app.role.BROWSER com.brave.browser' "$SBX/roles.log"
+check "confirms Brave is the default browser" sh -c "echo \"\$0\" | grep -q 'set as the default browser'" "$out"
+check "VLC (installed) -> media default instructions" sh -c "echo \"\$0\" | grep -q \"default media player -> org.videolan.vlc\" && echo \"\$0\" | grep -qi 'Always'" "$out"
+: > "$SBX/roles.log"
+out="$(FAKE_BRAVE=0 bash "$CLI" set-default 2>&1)"   # Brave not installed
+check "Brave absent -> points to Aurora, sets no role" sh -c "echo \"\$0\" | grep -qi 'Aurora Store' && ! grep -q add-role-holder '$SBX/roles.log'" "$out"
+out="$(bash "$CLI" set-default --browser 'bad;rm' 2>&1)"; check "rejects a bad browser package name" sh -c "echo \"\$0\" | grep -qi 'bad --browser'" "$out"
+check "set-default is audited" grep -q 'set-default browser=' "$SBX/state/audit.log"
 
 # ---------------------------------------------------------------- Termux toolkit
 echo "== Termux toolkit (fake pkg/pip) =="

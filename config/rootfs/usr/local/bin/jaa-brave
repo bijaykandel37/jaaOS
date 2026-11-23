@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# jaa-brave — install the Brave browser and make it the default. Brave is NOT in Debian, so it is
+# not part of the reproducible jaaOS image; this fetches it from Brave's own official signed APT
+# repository. Note: Brave is a Chromium-based browser that sends telemetry to Brave and bundles
+# Brave Rewards/Wallet — a user choice, not part of the de-Googled base. Run it once:
+#     jaa-brave            # install Brave + set it as your default browser
+#     jaa-brave remove     # uninstall Brave and its repo
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || exec sudo -E "$0" "$@"
+KEYRING=/etc/apt/keyrings/brave-browser-archive-keyring.gpg
+LIST=/etc/apt/sources.list.d/brave-browser-release.list
+user="${SUDO_USER:-$(id -un)}"
+
+if [ "${1:-install}" = remove ]; then
+	apt-get remove -y brave-browser || true
+	rm -f "$KEYRING" "$LIST"; apt-get update || true
+	echo "Brave removed."; exit 0
+fi
+
+command -v curl >/dev/null || { apt-get update && apt-get install -y curl; }
+install -d -m0755 /etc/apt/keyrings
+curl -fsSL https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg -o "$KEYRING"
+echo "deb [signed-by=$KEYRING] https://brave-browser-apt-release.s3.brave.com/ stable main" > "$LIST"
+apt-get update
+apt-get install -y brave-browser
+
+# Make Brave the default browser for the invoking (non-root) user.
+if [ -n "$user" ] && [ "$user" != root ]; then
+	sudo -u "$user" env DISPLAY="${DISPLAY:-:0}" xdg-settings set default-web-browser brave-browser.desktop 2>/dev/null || true
+	sudo -u "$user" xdg-mime default brave-browser.desktop x-scheme-handler/http x-scheme-handler/https text/html 2>/dev/null || true
+fi
+echo "Brave installed and set as the default browser for ${user}."

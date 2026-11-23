@@ -8,6 +8,7 @@
 #   jaa-mobile lowbw on|off|status            # low-bandwidth mode: background data only for SSH + alerts
 #   jaa-mobile install-apk FILE.apk           # install any APK (shows what it is first)
 #   jaa-mobile workspace                      # second-workspace options: Private space / users
+#   jaa-mobile set-default                    # Brave as default browser, VLC as default media player
 #   jaa-mobile audit [verify]                 # this computer's log of every adb command jaa-mobile ran
 #
 # Flavours: pure (default) = no Google code at all; Play Store apps through Aurora Store.
@@ -215,10 +216,11 @@ Done. Finish on the phone (these steps need you, by design):
   2. FMD (remote wipe): open FMD, grant device admin, set a PIN; then "wipe" is an SMS command
      from a trusted number (see docs/12-mobile-build.md, "Remote wipe").
   3. Harden the phone's security settings:   jaa-harden audit   then   jaa-harden apply
-  4. Second workspace: Settings > Security & privacy > Private space (own PIN/pattern), or
+  4. Default apps: VLC is installed; install Brave from the Aurora Store, then:  jaa-mobile set-default
+  5. Second workspace: Settings > Security & privacy > Private space (own PIN/pattern), or
      Settings > System > Multiple users. See:  jaa-mobile workspace
 EOF
-	[ "$FLAVOR" = microg ] && echo "  5. microG: open microG Settings > Self-Check, grant everything; enable Cloud Messaging."
+	[ "$FLAVOR" = microg ] && echo "  6. microG: open microG Settings > Self-Check, grant everything; enable Cloud Messaging."
 	return 0
 }
 
@@ -274,6 +276,47 @@ Two secrets, two workspaces:
 EOF
 }
 
+pkg_installed_phone() { phone pm list packages 2>/dev/null | grep -qx "package:$1"; }
+
+cmd_set_default() {
+	local browser="com.brave.browser" media="org.videolan.vlc"
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--browser) browser="${2:-}"; shift 2 ;;
+			--media)   media="${2:-}"; shift 2 ;;
+			*) die "unknown option: $1" ;;
+		esac
+	done
+	valid_pkg "$browser" || die "bad --browser package: $browser"
+	valid_pkg "$media" || die "bad --media package: $media"
+	select_device
+	audit_line "set-default browser=$browser media=$media"
+
+	echo "== default browser -> $browser"
+	if pkg_installed_phone "$browser"; then
+		# Android 10+: the browser is a role. On a LineageOS userdebug build the adb shell may set it.
+		phone cmd role add-role-holder android.app.role.BROWSER "$browser" >/dev/null 2>&1 || true
+		local held; held="$(phone cmd role get-role-holders android.app.role.BROWSER 2>/dev/null)"
+		if [[ "$held" == *"$browser"* ]]; then echo "  set as the default browser."
+		else echo "  could NOT set it from here. On the phone: Settings > Apps > Default apps > Browser app > ${browser##*.}."; fi
+	else
+		echo "  $browser is not installed."
+		case "$browser" in
+			com.brave.browser) echo "  Brave is not on F-Droid. Install it from the Aurora Store (search 'Brave'), then re-run this.";;
+			*) echo "  Install it first, then re-run this.";;
+		esac
+	fi
+
+	echo "== default media player -> $media"
+	if pkg_installed_phone "$media"; then
+		# Android has no 'media player' role, so this cannot be forced from adb. Set it on the phone once.
+		echo "  $media is installed. Android has no system 'default media player' switch, so set it once:"
+		echo "    open any audio/video file > choose ${media##*.} > 'Always'. (It then stays the default.)"
+	else
+		echo "  $media is not installed — run: jaa-mobile fetch-apps && jaa-mobile setup  (VLC is in apps.lock)."
+	fi
+}
+
 cmd_audit() {
 	[ -f "$AUDIT" ] || { echo "no audit log yet ($AUDIT)"; return 0; }
 	if [ "${1:-}" = verify ]; then
@@ -301,6 +344,7 @@ case "$cmd" in
 	lowbw)        cmd_lowbw "$@" ;;
 	install-apk)  cmd_install_apk "$@" ;;
 	workspace)    cmd_workspace "$@" ;;
+	set-default)  cmd_set_default "$@" ;;
 	audit)        cmd_audit "$@" ;;
 	help|-h|--help) usage ;;
 	*) usage >&2; exit 2 ;;

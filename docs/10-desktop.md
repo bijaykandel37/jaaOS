@@ -32,13 +32,27 @@ QEMU's emulated drive.*
   Ristretto, task manager, screenshots, notifications, screen locker, power manager.
 - NetworkManager applet (Wi-Fi/VPN), PipeWire sound, polkit agent (so the applet and Thunar can
   ask for your password).
-- Firefox ESR.
+- **VLC** — the **default media player** (set system-wide in `config/rootfs/etc/xdg/mimeapps.list`).
+- **Firefox ESR** — kept as a privacy/fallback browser.
 - `spice-vdagent` (clipboard + automatic resize in VMs).
 - Look: Greybird-dark theme, Adwaita icons, DejaVu fonts. These are the defaults for new users
   (`config/rootfs/etc/xdg/xfce4/xfconf/`), and each user can change them.
 
-The live desktop has **Install jaaOS** (runs `sudo jaa-install` in a terminal) and
-**jaaOS keyboard shortcuts** (`jaa-keys`) on the desktop and in the menu.
+The live desktop has **Install jaaOS** (runs `sudo jaa-install`), **Install Brave (default
+browser)**, and **jaaOS keyboard shortcuts** (`jaa-keys`) on the desktop and in the menu.
+
+### Default apps: Brave + VLC
+
+- **VLC is the default media player** out of the box (it is a Debian package, so it is baked into
+  the image).
+- **Brave is the configured default browser**, but it is **not in Debian**, so it is not baked
+  into the reproducible image. Install it in one command — `jaa-brave` adds Brave's official
+  signed APT repo, installs `brave-browser`, and sets it as your default browser (the **Install
+  Brave** desktop icon runs it). Honest note: Brave is a Chromium browser that sends telemetry to
+  Brave and bundles Rewards/Wallet — it is a user choice, not part of the de-Googled base; that is
+  why jaaOS makes it a one-command opt-in rather than shipping it in the default image. Remove it
+  with `jaa-brave remove`. (If you want Brave fully baked into a custom ISO, add its repo to
+  `build/profiles/desktop-xfce.packages`' build step — ask and it can be a `BRAVE=1` build flag.)
 
 ## Installing it
 

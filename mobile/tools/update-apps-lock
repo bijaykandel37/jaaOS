@@ -44,6 +44,7 @@ WANT = [
     ("devsec",   "com.termux.tasker",            "Termux:Tasker — run jaaOS scripts from Tasker / Quick-Settings tiles"),
     ("net",      "de.blinkt.openvpn",            "OpenVPN for Android — import .ovpn and connect"),
     ("net",      "com.tailscale.ipn",            "Tailscale — mesh VPN; point it at your Headscale login server"),
+    ("media",    "org.videolan.vlc",             "VLC — media player (set as the default with jaa-mobile set-default)"),
     ("security", "com.beemdevelopment.aegis",    "Aegis — 2FA codes, encrypted vault"),
     ("security", "com.kunzisoft.keepass.libre",  "KeePassDX — password manager (KeePass)"),
     ("security", "de.nulide.findmydevice",       "FMD — remote locate / lock / wipe via SMS or FMD server"),

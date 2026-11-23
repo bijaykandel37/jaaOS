@@ -52,7 +52,10 @@ wireplumber
 pavucontrol
 
 # --- apps ---
+# Firefox stays as a fallback / privacy browser; Brave (the default) is installed by `jaa-brave`
+# because it is not in Debian. VLC is the default media player.
 firefox-esr
+vlc
 
 # --- VMs: clipboard sharing + automatic resize under QEMU/SPICE (tiny; harmless on hardware) ---
 spice-vdagent
